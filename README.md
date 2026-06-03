@@ -127,7 +127,7 @@ JSONL, one conversation per line:
 {"messages":[{"role":"user","content":"How do I reset my password?"},{"role":"assistant","content":"Go to Settings → Security → Reset password."}]}
 ```
 
-`/tinker validate` checks for basic JSONL/message-shape issues and previews the first few examples. It is a lightweight guardrail, not a substitute for full renderer/token inspection before large runs.
+`/tinker validate` runs basic JSONL/message-shape checks plus a Python-backed Tinker Cookbook renderer/token-mask audit when dependencies are installed. It returns a clear `READY`, `SMOKE ONLY`, or `FIX DATA FIRST` recommendation with token histograms, truncation risk, zero-trainable rows, longest examples, decoded previews, and trainable-token snippets.
 
 ## Command reference
 

@@ -142,7 +142,6 @@ function latestMetrics(metricsPath: string): string | undefined {
 
 function monitorSummary(logDir: string): string[] {
   const metricsPath = path.join(logDir, "metrics.jsonl");
-  const checkpointPath = path.join(logDir, "checkpoints.jsonl");
   const lines: string[] = [`Tinker monitor: ${path.basename(logDir)}`];
   try {
     const rows = readJsonl(metricsPath);
@@ -254,11 +253,13 @@ function validateDataset(filePath: string): string {
   ].filter(Boolean).join("\n");
 }
 
-async function validateDatasetWithPython(filePath: string, model: string, maxExamples: number): Promise<string> {
+async function validateDatasetWithPython(filePath: string, model: string, maxExamples: number, maxLength: number): Promise<string> {
   const code = String.raw`
-import json, sys, statistics, traceback
-file_path, model_name, max_examples_s = sys.argv[1:4]
+import json, sys, statistics
+file_path, model_name, max_examples_s, max_length_s = sys.argv[1:5]
 max_examples = int(max_examples_s)
+max_length = int(max_length_s)
+
 try:
     from tinker_cookbook import model_info
     from tinker_cookbook.renderers import TrainOnWhat, get_renderer
@@ -266,6 +267,7 @@ try:
 except Exception as e:
     print(json.dumps({"ok": False, "stage": "import", "error": f"{type(e).__name__}: {e}"}))
     raise SystemExit(0)
+
 try:
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     tokenizer = get_tokenizer(model_name)
@@ -273,64 +275,271 @@ try:
 except Exception as e:
     print(json.dumps({"ok": False, "stage": "renderer", "error": f"{type(e).__name__}: {e}"}))
     raise SystemExit(0)
+
+BUCKETS = [512, 2048, 8192, 16384, 32768, 65536]
+
+def flatten_values(x):
+    if hasattr(x, "detach"):
+        x = x.detach().cpu()
+    if hasattr(x, "tolist"):
+        x = x.tolist()
+    if isinstance(x, (list, tuple)):
+        out = []
+        for item in x:
+            out.extend(flatten_values(item))
+        return out
+    try:
+        return [float(x)]
+    except Exception:
+        return []
+
+def content_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                if isinstance(part.get("text"), str):
+                    parts.append(part["text"])
+                elif isinstance(part.get("content"), str):
+                    parts.append(part["content"])
+            elif isinstance(part, str):
+                parts.append(part)
+        return "\n".join(parts)
+    return ""
+
+def stats(xs):
+    if not xs:
+        return {"count": 0}
+    xs_sorted = sorted(xs)
+    return {
+        "count": len(xs),
+        "min": xs_sorted[0],
+        "p25": xs_sorted[max(0, int((len(xs_sorted)-1)*0.25))],
+        "median": statistics.median(xs_sorted),
+        "p90": xs_sorted[max(0, int((len(xs_sorted)-1)*0.90))],
+        "p95": xs_sorted[max(0, int((len(xs_sorted)-1)*0.95))],
+        "max": xs_sorted[-1],
+        "mean": sum(xs_sorted) / len(xs_sorted),
+    }
+
+def histogram(xs):
+    counts = {f"<= {b}": 0 for b in BUCKETS}
+    counts[f"> {BUCKETS[-1]}"] = 0
+    for x in xs:
+        placed = False
+        for b in BUCKETS:
+            if x <= b:
+                counts[f"<= {b}"] += 1
+                placed = True
+                break
+        if not placed:
+            counts[f"> {BUCKETS[-1]}"] += 1
+    return counts
+
+def contiguous_ranges(indices):
+    if not indices:
+        return []
+    ranges = []
+    start = prev = indices[0]
+    for idx in indices[1:]:
+        if idx == prev + 1:
+            prev = idx
+        else:
+            ranges.append((start, prev + 1))
+            start = prev = idx
+    ranges.append((start, prev + 1))
+    return ranges
+
 rows = 0
-bad = []
-lengths = []
-trainable = []
-previews = []
+valid_rows = 0
 roles = {}
+bad = []
+no_user = []
+no_assistant = []
+empty_assistant = []
+assistant_char_lengths = []
+
+checked = 0
+token_lengths = []
+trainable_tokens = []
+trainable_ratios = []
+zero_trainable = []
+over_max_length = []
+top_longest = []
+previews = []
+trainable_previews = []
+length_mismatch = []
+
 try:
     with open(file_path) as f:
-        for idx, line in enumerate(f, start=1):
+        for line_number, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
                 continue
             rows += 1
             try:
                 obj = json.loads(line)
-                messages = obj.get("messages")
-                if not isinstance(messages, list):
-                    bad.append(f"line {idx}: missing messages[]")
-                    continue
-                for msg in messages:
-                    roles[msg.get("role", "<missing>")] = roles.get(msg.get("role", "<missing>"), 0) + 1
-                if len(lengths) < max_examples:
-                    model_input, weights = renderer.build_supervised_example(
-                        messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
-                    )
-                    toks = model_input.to_ints() if hasattr(model_input, "to_ints") else []
-                    w = [float(x) for x in list(weights)]
-                    lengths.append(len(toks))
-                    trainable.append(sum(1 for x in w if x > 0))
-                    if len(previews) < 3:
-                        previews.append(tokenizer.decode(toks[: min(len(toks), 400)]))
             except Exception as e:
-                bad.append(f"line {idx}: {type(e).__name__}: {e}")
+                bad.append({"line": line_number, "issue": f"invalid JSON: {type(e).__name__}: {e}"})
+                continue
+
+            messages = obj.get("messages")
+            if not isinstance(messages, list):
+                bad.append({"line": line_number, "issue": "missing messages[]"})
+                continue
+
+            valid_rows += 1
+            seen_user = False
+            seen_assistant = False
+            assistant_chars_this_row = 0
+
+            for j, msg in enumerate(messages):
+                if not isinstance(msg, dict):
+                    bad.append({"line": line_number, "issue": f"message {j} is not an object"})
+                    continue
+                role = msg.get("role", "<missing>")
+                roles[role] = roles.get(role, 0) + 1
+                if role not in {"system", "user", "assistant", "tool"}:
+                    bad.append({"line": line_number, "issue": f"message {j} has unexpected role {role!r}"})
+                if role == "user":
+                    seen_user = True
+                if role == "assistant":
+                    seen_assistant = True
+                    txt = content_text(msg.get("content"))
+                    assistant_chars_this_row += len(txt.strip())
+                    if not txt.strip():
+                        empty_assistant.append(line_number)
+                content = msg.get("content")
+                if not isinstance(content, (str, list)):
+                    bad.append({"line": line_number, "issue": f"message {j} content should be string or content-part array"})
+
+            if not seen_user:
+                no_user.append(line_number)
+            if not seen_assistant:
+                no_assistant.append(line_number)
+            assistant_char_lengths.append(assistant_chars_this_row)
+
+            if checked >= max_examples:
+                continue
+
+            try:
+                model_input, weights = renderer.build_supervised_example(
+                    messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+                )
+                toks = model_input.to_ints() if hasattr(model_input, "to_ints") else []
+                w = flatten_values(weights)
+                positive = [i for i, weight in enumerate(w) if weight > 0]
+                checked += 1
+                token_lengths.append(len(toks))
+                trainable_tokens.append(len(positive))
+                trainable_ratios.append((len(positive) / len(toks)) if toks else 0.0)
+
+                if len(w) not in {len(toks), max(0, len(toks) - 1)}:
+                    length_mismatch.append({"line": line_number, "tokens": len(toks), "weights": len(w)})
+                if len(positive) == 0:
+                    zero_trainable.append(line_number)
+                if len(toks) > max_length:
+                    over_max_length.append({"line": line_number, "tokens": len(toks)})
+
+                top_longest.append({"line": line_number, "tokens": len(toks), "trainable": len(positive)})
+                top_longest = sorted(top_longest, key=lambda x: x["tokens"], reverse=True)[:8]
+
+                if len(previews) < 3:
+                    previews.append({"line": line_number, "text": tokenizer.decode(toks[: min(len(toks), 500)])})
+                if len(trainable_previews) < 5 and positive:
+                    snippets = []
+                    for start, end in contiguous_ranges(positive)[:4]:
+                        snippet_tokens = toks[start:min(end, start + 160)]
+                        snippets.append({"range": [start, end], "text": tokenizer.decode(snippet_tokens)})
+                    trainable_previews.append({"line": line_number, "snippets": snippets})
+            except Exception as e:
+                bad.append({"line": line_number, "issue": f"renderer/tokenization failed: {type(e).__name__}: {e}"})
 except Exception as e:
     print(json.dumps({"ok": False, "stage": "file", "error": f"{type(e).__name__}: {e}"}))
     raise SystemExit(0)
-def stats(xs):
-    if not xs:
-        return {"count": 0}
-    return {"count": len(xs), "min": min(xs), "median": statistics.median(xs), "max": max(xs), "mean": sum(xs) / len(xs)}
+
+serious = []
+if bad:
+    serious.append(f"{len(bad)} data/renderer issue(s)")
+if no_assistant:
+    serious.append(f"{len(no_assistant)} row(s) with no assistant message")
+if empty_assistant:
+    serious.append(f"{len(empty_assistant)} empty assistant message(s)")
+if zero_trainable:
+    serious.append(f"{len(zero_trainable)} checked row(s) with zero trainable tokens")
+if length_mismatch:
+    serious.append(f"{len(length_mismatch)} checked row(s) with token/weight length mismatch")
+
+warnings = []
+if rows < 20:
+    warnings.append("very small dataset; good for smoke tests only")
+if over_max_length:
+    warnings.append(f"{len(over_max_length)} checked row(s) exceed max_length={max_length}")
+if checked < min(max_examples, valid_rows):
+    warnings.append("not all rows were tokenized; increase --examples for a fuller audit")
+if token_lengths and max(token_lengths) > max_length * 0.9:
+    warnings.append("some examples are close to the max length; inspect truncation behavior")
+if assistant_char_lengths and statistics.median(assistant_char_lengths) < 20:
+    warnings.append("median assistant completion is very short; confirm this is intentional")
+
+if serious:
+    readiness = "FIX DATA FIRST"
+elif warnings:
+    readiness = "SMOKE ONLY"
+else:
+    readiness = "READY"
+
+mean_tokens = (sum(token_lengths) / len(token_lengths)) if token_lengths else 0
+mean_trainable = (sum(trainable_tokens) / len(trainable_tokens)) if trainable_tokens else 0
+estimate = {
+    "estimated_total_input_tokens_per_epoch": int(mean_tokens * valid_rows) if checked else 0,
+    "estimated_trainable_tokens_per_epoch": int(mean_trainable * valid_rows) if checked else 0,
+    "basis": f"estimated from {checked} checked row(s)",
+}
+
 print(json.dumps({
-    "ok": len(bad) == 0,
+    "ok": not serious,
     "stage": "done",
+    "readiness": readiness,
+    "serious": serious,
+    "warnings": warnings,
     "model": model_name,
     "renderer": renderer_name,
     "rows": rows,
+    "valid_rows": valid_rows,
+    "checked_examples": checked,
     "roles": roles,
-    "checked_examples": len(lengths),
-    "token_lengths": stats(lengths),
-    "trainable_tokens": stats(trainable),
-    "bad": bad[:50],
+    "token_lengths": stats(token_lengths),
+    "trainable_tokens": stats(trainable_tokens),
+    "trainable_ratios": stats(trainable_ratios),
+    "assistant_chars": stats(assistant_char_lengths),
+    "token_length_histogram": histogram(token_lengths),
+    "trainable_token_histogram": histogram(trainable_tokens),
+    "estimate": estimate,
+    "bad": bad[:80],
     "bad_count": len(bad),
+    "no_user": no_user[:20],
+    "no_user_count": len(no_user),
+    "no_assistant": no_assistant[:20],
+    "no_assistant_count": len(no_assistant),
+    "empty_assistant": empty_assistant[:20],
+    "empty_assistant_count": len(empty_assistant),
+    "zero_trainable": zero_trainable[:20],
+    "zero_trainable_count": len(zero_trainable),
+    "over_max_length": over_max_length[:20],
+    "over_max_length_count": len(over_max_length),
+    "length_mismatch": length_mismatch[:20],
+    "length_mismatch_count": len(length_mismatch),
+    "top_longest": top_longest,
     "previews": previews,
+    "trainable_previews": trainable_previews,
 }, ensure_ascii=False))
 `;
-  const { stdout } = await execFile("python3", ["-c", code, filePath, model, String(maxExamples)], {
-    timeout: 180_000,
-    maxBuffer: 8 * 1024 * 1024,
+  const { stdout } = await execFile("python3", ["-c", code, filePath, model, String(maxExamples), String(maxLength)], {
+    timeout: 240_000,
+    maxBuffer: 12 * 1024 * 1024,
   });
   const result = JSON.parse(stdout.trim().split(/\n/).slice(-1)[0] ?? "{}");
   if (!result.ok && result.stage !== "done") {
@@ -344,27 +553,56 @@ print(json.dumps({
       "uv pip install -U tinker-cookbook",
       "```",
       "",
-      "Falling back to the lightweight JSONL checks is still useful, but renderer/token-mask validation requires Python dependencies.",
+      "Falling back to lightweight JSONL checks is still useful, but renderer/token-mask validation requires Python dependencies.",
     ].join("\n");
   }
-  const lenStats = result.token_lengths ?? {};
-  const trainStats = result.trainable_tokens ?? {};
-  const warnings: string[] = [];
-  if ((trainStats.max ?? 0) === 0) warnings.push("No trainable assistant tokens found in checked examples — training would be a no-op or data masking is wrong.");
-  if ((lenStats.max ?? 0) > 32768) warnings.push(`Some checked examples exceed 32k tokens (max ${lenStats.max}); set --max-length carefully or inspect truncation.`);
-  if (result.rows < 20) warnings.push("Very small dataset; fine for smoke tests, weak for real fine-tuning.");
+
+  const readiness = String(result.readiness ?? "UNKNOWN");
+  const icon = readiness === "READY" ? "✅" : readiness === "SMOKE ONLY" ? "⚠️" : "❌";
+  const fmtStats = (s: any) => s?.count ? `count=${s.count}, min=${s.min}, p50=${s.median}, p90=${s.p90}, p95=${s.p95}, max=${s.max}, mean=${Number(s.mean).toFixed(1)}` : "n/a";
+  const fmtHist = (h: Record<string, number> | undefined) => h ? Object.entries(h).filter(([, v]) => v > 0).map(([k, v]) => `- ${k}: ${v}`).join("\n") || "- empty" : "- n/a";
+  const issueLines = [
+    ...(result.bad ?? []).map((x: any) => `- line ${x.line}: ${x.issue}`),
+    result.no_assistant_count ? `- rows with no assistant message: ${result.no_assistant.join(", ")}${result.no_assistant_count > result.no_assistant.length ? " …" : ""}` : "",
+    result.empty_assistant_count ? `- empty assistant rows: ${result.empty_assistant.join(", ")}${result.empty_assistant_count > result.empty_assistant.length ? " …" : ""}` : "",
+    result.zero_trainable_count ? `- zero-trainable checked rows: ${result.zero_trainable.join(", ")}${result.zero_trainable_count > result.zero_trainable.length ? " …" : ""}` : "",
+    result.length_mismatch_count ? `- token/weight length mismatches: ${(result.length_mismatch ?? []).map((x: any) => `line ${x.line} (${x.tokens} tokens/${x.weights} weights)`).join(", ")}` : "",
+  ].filter(Boolean);
+  const topLongest = (result.top_longest ?? []).map((x: any) => `- line ${x.line}: ${x.tokens} tokens, ${x.trainable} trainable`).join("\n") || "- n/a";
+  const trainablePreviews = (result.trainable_previews ?? []).map((p: any) => {
+    const snippets = (p.snippets ?? []).map((s: any) => `  - tokens ${s.range[0]}–${s.range[1]}:\n\n    ${String(s.text).replace(/\n/g, "\n    ").slice(0, 1000)}`).join("\n");
+    return `### Line ${p.line}\n${snippets}`;
+  }).join("\n\n") || "No trainable token previews available.";
+  const decodedPreviews = (result.previews ?? []).map((p: any) => `### Line ${p.line}\n\n\`\`\`text\n${String(p.text).slice(0, 1600)}\n\`\`\``).join("\n\n") || "No decoded previews available.";
+
+  const recommendation = readiness === "READY"
+    ? "Run `/tinker smoke train_sft.py --yes`, inspect metrics, then scale only after defining an eval."
+    : readiness === "SMOKE ONLY"
+      ? "Run only a tiny smoke test for now. Inspect warnings, decoded previews, and trainable snippets before larger runs."
+      : "Fix the data issues above before creating a training run.";
+
   return [
-    `# Renderer/token validation: ${filePath}`,
+    `# Tinker data readiness report`,
+    `## ${icon} ${readiness}`,
+    `- File: \`${filePath}\``,
     `- Model: \`${result.model}\``,
     `- Recommended renderer: \`${result.renderer}\``,
-    `- JSONL rows: ${result.rows}`,
-    `- Checked examples: ${result.checked_examples}`,
+    `- Rows: ${result.rows} (${result.valid_rows} valid JSONL conversation rows)`,
+    `- Checked with tokenizer/renderer: ${result.checked_examples}`,
     `- Roles: ${Object.entries(result.roles ?? {}).map(([k, v]) => `${k}=${v}`).join(", ") || "none"}`,
-    `- Token lengths: min=${lenStats.min ?? "n/a"}, median=${lenStats.median ?? "n/a"}, max=${lenStats.max ?? "n/a"}, mean=${typeof lenStats.mean === "number" ? lenStats.mean.toFixed(1) : "n/a"}`,
-    `- Trainable tokens: min=${trainStats.min ?? "n/a"}, median=${trainStats.median ?? "n/a"}, max=${trainStats.max ?? "n/a"}, mean=${typeof trainStats.mean === "number" ? trainStats.mean.toFixed(1) : "n/a"}`,
-    result.bad_count ? `\n## Issues\n${(result.bad ?? []).map((x: string) => `- ${x}`).join("\n")}${result.bad_count > 50 ? `\n- … ${result.bad_count - 50} more` : ""}` : "\n## Issues\nNo renderer/tokenization issues found in checked examples.",
-    warnings.length ? `\n## Warnings\n${warnings.map((x) => `- ${x}`).join("\n")}` : "",
-    `\n## Decoded previews\n${(result.previews ?? []).map((x: string, i: number) => `### Preview ${i + 1}\n\n\`\`\`text\n${x.slice(0, 1800)}\n\`\`\``).join("\n\n")}`,
+    "",
+    `## Recommendation\n${recommendation}`,
+    (result.serious ?? []).length ? `\n## Must fix\n${(result.serious ?? []).map((x: string) => `- ${x}`).join("\n")}` : "",
+    (result.warnings ?? []).length ? `\n## Warnings\n${(result.warnings ?? []).map((x: string) => `- ${x}`).join("\n")}` : "",
+    `\n## Token stats\n- Input tokens: ${fmtStats(result.token_lengths)}\n- Trainable assistant tokens: ${fmtStats(result.trainable_tokens)}\n- Trainable ratio: ${fmtStats(result.trainable_ratios)}\n- Assistant text chars: ${fmtStats(result.assistant_chars)}`,
+    `\n## Token length histogram\n${fmtHist(result.token_length_histogram)}`,
+    `\n## Trainable-token histogram\n${fmtHist(result.trainable_token_histogram)}`,
+    `\n## Token-volume estimate\n- Total input tokens / epoch: ~${result.estimate?.estimated_total_input_tokens_per_epoch ?? 0}\n- Trainable tokens / epoch: ~${result.estimate?.estimated_trainable_tokens_per_epoch ?? 0}\n- Basis: ${result.estimate?.basis ?? "n/a"}`,
+    issueLines.length ? `\n## Detailed issues\n${issueLines.slice(0, 100).join("\n")}` : "\n## Detailed issues\nNo serious data/rendering issues found in checked examples.",
+    `\n## Longest checked examples\n${topLongest}`,
+    (result.over_max_length_count ?? 0) > 0 ? `\n## Over max length (${maxLength})\n${(result.over_max_length ?? []).map((x: any) => `- line ${x.line}: ${x.tokens} tokens`).join("\n")}` : "",
+    `\n## Trainable token snippets\n${trainablePreviews}`,
+    `\n## Decoded input previews\n${decodedPreviews}`,
   ].filter(Boolean).join("\n");
 }
 
@@ -497,14 +735,15 @@ export default async function (pi: ExtensionAPI) {
         }
         const dataFile = path.resolve(ctx.cwd, file);
         const model = String(options.model ?? "Qwen/Qwen3.5-9B-Base");
-        const maxExamples = Number(options.examples ?? 50);
+        const maxExamples = Number(options.examples ?? 200);
+        const maxLength = Number(options["max-length"] ?? 32768);
         const lightweight = validateDataset(dataFile);
         if (options.quick === true) {
           sendReport("Tinker dataset validation", lightweight, "info");
           return;
         }
         try {
-          const python = await validateDatasetWithPython(dataFile, model, maxExamples);
+          const python = await validateDatasetWithPython(dataFile, model, maxExamples, maxLength);
           sendReport("Tinker dataset validation", `${python}\n\n---\n\n${lightweight}`, "info");
         } catch (error) {
           sendReport("Tinker dataset validation", `${lightweight}\n\n## Python-backed validation failed\n${error instanceof Error ? error.message : String(error)}`, "warning");

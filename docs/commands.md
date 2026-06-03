@@ -47,7 +47,7 @@ Runs two validation layers:
 1. lightweight JSONL/message-shape checks in TypeScript,
 2. Python-backed Tinker Cookbook renderer/token-mask validation when dependencies are installed.
 
-The Python-backed check loads the recommended renderer for the model, tokenizes examples, reports token-length stats, reports trainable assistant-token stats, and decodes previews.
+The Python-backed check loads the recommended renderer for the model and produces a data-readiness report: `READY`, `SMOKE ONLY`, or `FIX DATA FIRST`. It tokenizes examples, checks trainable assistant-token masks, reports token and trainable-token histograms, identifies zero-trainable rows, flags truncation risk, lists longest examples, estimates token volume per epoch, and shows decoded previews plus trainable-token snippets.
 
 Example:
 
@@ -60,7 +60,8 @@ Options:
 | Option | Default | Meaning |
 |---|---:|---|
 | `--model` | `Qwen/Qwen3.5-9B-Base` | Model for renderer/tokenizer validation |
-| `--examples` | `50` | Number of examples to tokenize/check |
+| `--examples` | `200` | Number of examples to tokenize/check |
+| `--max-length` | `32768` | Length threshold for truncation-risk warnings |
 | `--quick` | false | Only run lightweight JSONL checks |
 
 ## `/tinker sft <jsonl> [options]`

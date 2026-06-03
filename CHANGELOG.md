@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+Validation quality upgrade:
+
+- `/tinker validate` now produces a clear data-readiness report: `READY`, `SMOKE ONLY`, or `FIX DATA FIRST`.
+- Added richer renderer/token-mask checks using Tinker Cookbook.
+- Added token-length stats, trainable-token stats, trainable-ratio stats, histograms, longest examples, over-max-length warnings, zero-trainable detection, empty-assistant detection, and token-volume estimates.
+- Added decoded input previews and trainable assistant-token snippets so users can inspect exactly what the model will learn.
+
 ## 0.2.0
 
 Golden-path usability improvements:
