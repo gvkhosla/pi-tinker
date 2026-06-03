@@ -27,13 +27,15 @@
     "skills/",
     "docs/",
     "examples/",
+    "scripts/",
     "README.md",
     "LICENSE",
     "NOTICE",
     "CHANGELOG.md"
   ],
   "scripts": {
-    "smoke-test": "node scripts/smoke-test.mjs"
+    "smoke-test": "node scripts/smoke-test.mjs",
+    "local-integration-test": "node scripts/local-integration-test.mjs"
   },
   "pi": {
     "extensions": [
