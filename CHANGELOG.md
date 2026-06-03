@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+Eval-first workflow:
+
+- Added `/tinker eval init` to create an editable exact/contains-match eval harness.
+- Added `/tinker eval baseline` to evaluate the base model before training.
+- Added `/tinker eval checkpoint` to evaluate a Tinker sampler checkpoint with the same eval set.
+- Added `/tinker eval compare` to show baseline vs checkpoint delta plus wins/regressions.
+- Local integration tests now cover eval scaffolding and comparison.
+
 ## 0.3.0
 
 Validation quality upgrade:

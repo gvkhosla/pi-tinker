@@ -16,6 +16,7 @@ Adding another framework inside Pi would make the user experience worse. Pi shou
 - setup checks,
 - JSONL plus Python-backed renderer/token-mask validation,
 - guided project initialization,
+- eval-first baseline/checkpoint comparison,
 - scaffolding editable Tinker Cookbook scripts,
 - smoke-test execution,
 - live monitoring/log summarization,
@@ -45,6 +46,8 @@ Tinker/Tinker Cookbook handle:
 /tinker setup
 /tinker init data/train.jsonl
 /tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
+/tinker eval init
+/tinker eval baseline --model Qwen/Qwen3.5-9B-Base
 /skill:tinker-research plan my eval before scaling
 /tinker smoke train_sft.py
 /tinker monitor logs/run

@@ -627,6 +627,229 @@ function makeProjectReadme(options: { model: string; dataFile: string; logPath: 
   return `# Tinker fine-tuning project\n\nThis project was scaffolded by \`pi-tinker\`. The important files are normal editable Python, not hidden framework state.\n\n## Goal\n\nFine-tune \`${options.model}\` on:\n\n\`${options.dataFile}\`\n\n## Success metric\n\n${options.successMetric || "Define this before scaling beyond a smoke test."}\n\n## Smoke test\n\n\`\`\`bash\nuv pip install tinker-cookbook\npython train_sft.py max_steps=2\n\`\`\`\n\n## Monitor\n\nInside Pi:\n\n\`\`\`text\n/tinker monitor ${options.logPath}\n/tinker status ${options.logPath}\n/tinker checkpoints ${options.logPath}\n\`\`\`\n\n## Scale up\n\nOnly scale after checking:\n\n- JSONL validation passed\n- renderer/token validation passed\n- smoke test produced metrics\n- decoded examples look correct\n- success metric/eval is defined\n\n\`\`\`bash\npython train_sft.py max_steps=100\n\`\`\`\n\n## Chat with a checkpoint in Pi\n\nAfter a sampler checkpoint appears in \`checkpoints.jsonl\`:\n\n\`\`\`text\n/tinker checkpoints ${options.logPath}\n/model\n\`\`\`\n`;
 }
 
+function makeExampleEvalJsonl() {
+  return [
+    {
+      messages: [{ role: "user", content: "Rewrite this to be concise: We are extremely sorry for the inconvenience and are investigating." }],
+      expected: "Sorry for the inconvenience — we’re investigating.",
+      match: "contains",
+      notes: "Replace with examples from your real target distribution.",
+    },
+    {
+      messages: [{ role: "user", content: "Classify sentiment: The setup was fast and the docs were clear." }],
+      expected: "positive",
+      match: "contains",
+    },
+  ].map((row) => JSON.stringify(row)).join("\n") + "\n";
+}
+
+function makeExactEvalScript() {
+  return `"""Simple editable eval for Tinker checkpoints.
+
+Input JSONL format:
+  {"messages": [{"role": "user", "content": "..."}], "expected": "...", "match": "contains"}
+
+Match modes:
+  - exact: normalized output equals normalized expected
+  - contains: normalized expected appears in normalized output
+  - prefix: normalized output starts with normalized expected
+
+Examples:
+  python eval.py --base-model Qwen/Qwen3.5-9B-Base --data data/eval.jsonl --out eval_results/baseline.json
+  python eval.py --model-path 'tinker://.../sampler_weights/...' --base-model Qwen/Qwen3.5-9B-Base --data data/eval.jsonl --out eval_results/step-20.json
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+import tinker
+from tinker_cookbook import model_info
+from tinker_cookbook.renderers import get_renderer
+
+
+def normalize(text: str) -> str:
+    text = text.strip().lower()
+    text = re.sub(r"\\s+", " ", text)
+    text = text.strip(" \\t\\n\\r.,;:!?")
+    return text
+
+
+def score_output(output: str, expected: str, match: str) -> bool:
+    out = normalize(output)
+    exp = normalize(expected)
+    if match == "exact":
+        return out == exp
+    if match == "prefix":
+        return out.startswith(exp)
+    if match == "contains":
+        return exp in out
+    raise ValueError(f"unknown match mode: {match!r}")
+
+
+def load_rows(path: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with open(path) as f:
+        for line_number, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if not isinstance(row.get("messages"), list):
+                raise ValueError(f"line {line_number}: missing messages[]")
+            if "expected" not in row:
+                raise ValueError(f"line {line_number}: missing expected")
+            rows.append(row)
+    return rows
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(description="Evaluate a base model or Tinker sampler checkpoint.")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--base-model", help="Tinker base model id for baseline evaluation")
+    target.add_argument("--model-path", help="Tinker sampler checkpoint path")
+    parser.add_argument("--renderer-model", help="Model id used to choose renderer/tokenizer; defaults to --base-model or sampler base model")
+    parser.add_argument("--data", default="data/eval.jsonl")
+    parser.add_argument("--out", default="eval_results/result.json")
+    parser.add_argument("--max-tokens", type=int, default=128)
+    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--limit", type=int, default=0, help="0 means all rows")
+    args = parser.parse_args()
+
+    rows = load_rows(args.data)
+    if args.limit:
+        rows = rows[: args.limit]
+    if not rows:
+        raise SystemExit("No eval rows found.")
+
+    service = tinker.ServiceClient()
+    if args.model_path:
+        sampling_client = await service.create_sampling_client_async(model_path=args.model_path)
+        target_name = args.model_path
+        renderer_model = args.renderer_model or sampling_client.get_base_model()
+    else:
+        sampling_client = await service.create_sampling_client_async(base_model=args.base_model)
+        target_name = args.base_model
+        renderer_model = args.renderer_model or args.base_model
+
+    tokenizer = sampling_client.get_tokenizer()
+    renderer_name = model_info.get_recommended_renderer_name(renderer_model)
+    renderer = get_renderer(renderer_name, tokenizer)
+    stop = renderer.get_stop_sequences()
+
+    results: list[dict[str, Any]] = []
+    correct = 0
+
+    for index, row in enumerate(rows, start=1):
+        messages = row["messages"]
+        expected = str(row["expected"])
+        match = str(row.get("match", "contains"))
+        prompt = renderer.build_generation_prompt(messages, role="assistant")
+        response = await sampling_client.sample_async(
+            prompt=prompt,
+            num_samples=1,
+            sampling_params=tinker.SamplingParams(
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                stop=stop,
+            ),
+        )
+        sequence = response.sequences[0] if hasattr(response, "sequences") else response.samples[0]
+        output = tokenizer.decode(sequence.tokens)
+        is_correct = score_output(output, expected, match)
+        correct += int(is_correct)
+        results.append({
+            "index": index,
+            "correct": is_correct,
+            "match": match,
+            "expected": expected,
+            "output": output,
+            "messages": messages,
+        })
+        print(f"[{index}/{len(rows)}] {'✓' if is_correct else '✗'} expected={expected!r} output={output[:120]!r}")
+
+    summary = {
+        "target": target_name,
+        "renderer_model": renderer_model,
+        "renderer": renderer_name,
+        "data": args.data,
+        "num_examples": len(rows),
+        "num_correct": correct,
+        "accuracy": correct / len(rows),
+        "results": results,
+    }
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\\n")
+    print(f"accuracy={summary['accuracy']:.3f} ({correct}/{len(rows)})")
+    print(f"wrote {out}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+`;
+}
+
+type EvalSummary = {
+  target?: string;
+  renderer_model?: string;
+  renderer?: string;
+  data?: string;
+  num_examples?: number;
+  num_correct?: number;
+  accuracy?: number;
+  results?: Array<{ index: number; correct: boolean; expected: string; output: string }>;
+};
+
+function readEvalSummary(filePath: string): EvalSummary {
+  return JSON.parse(readFileSync(filePath, "utf8")) as EvalSummary;
+}
+
+function formatEvalSummary(filePath: string): string {
+  const result = readEvalSummary(filePath);
+  const accuracy = typeof result.accuracy === "number" ? `${(result.accuracy * 100).toFixed(1)}%` : "n/a";
+  const examples = result.num_examples ?? result.results?.length ?? 0;
+  const correct = result.num_correct ?? result.results?.filter((r) => r.correct).length ?? 0;
+  const failures = (result.results ?? []).filter((r) => !r.correct).slice(0, 5);
+  return [
+    `- File: \`${filePath}\``,
+    `- Target: \`${result.target ?? "unknown"}\``,
+    `- Renderer: \`${result.renderer ?? "unknown"}\`${result.renderer_model ? ` for \`${result.renderer_model}\`` : ""}`,
+    `- Accuracy: ${accuracy} (${correct}/${examples})`,
+    failures.length ? `\n## Sample failures\n${failures.map((f) => `### #${f.index}\n- Expected: ${JSON.stringify(f.expected)}\n- Output: ${JSON.stringify(String(f.output).slice(0, 500))}`).join("\n\n")}` : "\nNo failures recorded.",
+  ].join("\n");
+}
+
+function compareEvalSummaries(baselinePath: string, candidatePath: string): string {
+  const baseline = readEvalSummary(baselinePath);
+  const candidate = readEvalSummary(candidatePath);
+  const bAcc = baseline.accuracy ?? 0;
+  const cAcc = candidate.accuracy ?? 0;
+  const delta = cAcc - bAcc;
+  const bResults = new Map((baseline.results ?? []).map((r) => [r.index, r]));
+  const wins: string[] = [];
+  const regressions: string[] = [];
+  for (const r of candidate.results ?? []) {
+    const before = bResults.get(r.index);
+    if (!before) continue;
+    if (!before.correct && r.correct) wins.push(`#${r.index}: ${JSON.stringify(String(r.output).slice(0, 220))}`);
+    if (before.correct && !r.correct) regressions.push(`#${r.index}: expected ${JSON.stringify(r.expected)}, got ${JSON.stringify(String(r.output).slice(0, 220))}`);
+  }
+  return [
+    `# Eval comparison`,
+    `- Baseline: \`${baselinePath}\` — ${(bAcc * 100).toFixed(1)}% (${baseline.num_correct}/${baseline.num_examples})`,
+    `- Candidate: \`${candidatePath}\` — ${(cAcc * 100).toFixed(1)}% (${candidate.num_correct}/${candidate.num_examples})`,
+    `- Delta: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)} points`,
+    wins.length ? `\n## Wins\n${wins.slice(0, 10).map((x) => `- ${x}`).join("\n")}` : "\n## Wins\nNone recorded.",
+    regressions.length ? `\n## Regressions\n${regressions.slice(0, 10).map((x) => `- ${x}`).join("\n")}` : "\n## Regressions\nNone recorded.",
+  ].join("\n");
+}
+
 export default async function (pi: ExtensionAPI) {
   let state = await loadState();
   let monitorInterval: ReturnType<typeof setInterval> | undefined;
@@ -691,6 +914,7 @@ export default async function (pi: ExtensionAPI) {
           "- `/tinker setup` — check API key, Python, uv/pip, Tinker SDK.",
           "- `/tinker init` — guided SFT project wizard (or `/tinker init data/train.jsonl`).",
           "- `/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base` — JSONL + renderer/token-mask validation.",
+          "- `/tinker eval init|baseline|checkpoint|compare` — create and run simple evals before/after training.",
           "- `/tinker sft data/train.jsonl --model Qwen/Qwen3.5-9B-Base --steps 20` — scaffold editable SFT files.",
           "- `/tinker smoke [train_sft.py]` — run a 2-step smoke test and summarize logs.",
           "- `/tinker monitor <log_dir>` — pin a live metrics widget above the editor.",
@@ -748,6 +972,123 @@ export default async function (pi: ExtensionAPI) {
         } catch (error) {
           sendReport("Tinker dataset validation", `${lightweight}\n\n## Python-backed validation failed\n${error instanceof Error ? error.message : String(error)}`, "warning");
         }
+        return;
+      }
+
+      if (subcommand === "eval") {
+        const [actionRaw, ...evalRest] = rest;
+        const action = actionRaw ?? "help";
+        const { positional, options } = parseOptions(evalRest);
+
+        if (action === "help" || action === "--help" || action === "-h") {
+          sendReport("Tinker eval", [
+            "Commands:",
+            "- `/tinker eval init` — create `eval.py` and `data/eval.jsonl`.",
+            "- `/tinker eval baseline --model Qwen/Qwen3.5-9B-Base` — evaluate the base model.",
+            "- `/tinker eval checkpoint tinker://... --model Qwen/Qwen3.5-9B-Base` — evaluate a sampler checkpoint.",
+            "- `/tinker eval compare eval_results/baseline.json eval_results/checkpoint.json` — compare results.",
+          ].join("\n"));
+          return;
+        }
+
+        if (action === "init") {
+          const force = options.force === true;
+          const files = [
+            { rel: "eval.py", content: makeExactEvalScript() },
+            { rel: path.join("data", "eval.jsonl"), content: makeExampleEvalJsonl() },
+          ];
+          const written: string[] = [];
+          for (const file of files) {
+            const target = path.join(ctx.cwd, file.rel);
+            if (existsSync(target) && !force) {
+              sendReport("Tinker eval init", `${target} already exists. Re-run with --force to overwrite.`, "warning");
+              return;
+            }
+            await mkdir(path.dirname(target), { recursive: true });
+            await writeFile(target, file.content);
+            written.push(file.rel);
+          }
+          sendReport("Tinker eval initialized", [
+            `Wrote ${written.map((x) => `\`${x}\``).join(", ")}.`,
+            "",
+            "Edit `data/eval.jsonl`, then run:",
+            "```text",
+            "/tinker eval baseline --model Qwen/Qwen3.5-9B-Base --yes",
+            "/tinker eval checkpoint tinker://.../sampler_weights/... --model Qwen/Qwen3.5-9B-Base --yes",
+            "/tinker eval compare eval_results/baseline.json eval_results/checkpoint.json",
+            "```",
+          ].join("\n"), "success");
+          return;
+        }
+
+        if (action === "baseline" || action === "checkpoint") {
+          const script = path.resolve(ctx.cwd, String(options.script ?? "eval.py"));
+          if (!existsSync(script)) {
+            sendReport("Tinker eval", `Missing \`${script}\`. Run \`/tinker eval init\` first.`, "warning");
+            return;
+          }
+          const model = String(options.model ?? options["base-model"] ?? "Qwen/Qwen3.5-9B-Base");
+          const data = path.resolve(ctx.cwd, String(options.data ?? "data/eval.jsonl"));
+          if (!existsSync(data)) {
+            sendReport("Tinker eval", `Eval data not found: ${data}`, "error");
+            return;
+          }
+          const checkpoint = action === "checkpoint" ? positional[0] : undefined;
+          if (action === "checkpoint" && !checkpoint) {
+            sendReport("Tinker eval checkpoint", "Usage: `/tinker eval checkpoint tinker://.../sampler_weights/... --model Qwen/Qwen3.5-9B-Base`", "warning");
+            return;
+          }
+          const out = path.resolve(ctx.cwd, String(options.out ?? (action === "baseline" ? "eval_results/baseline.json" : `eval_results/${String(checkpoint).split("/").slice(-1)[0] || "checkpoint"}.json`)));
+          const ok = options.yes === true || !ctx.hasUI ? true : await ctx.ui.confirm("Run Tinker eval?", "This will sample from Tinker and may incur API usage. Continue?");
+          if (!ok) {
+            sendReport("Tinker eval", "Cancelled.", "warning");
+            return;
+          }
+          const argsForPython = action === "baseline"
+            ? [script, "--base-model", model, "--data", data, "--out", out]
+            : [script, "--model-path", String(checkpoint), "--renderer-model", model, "--data", data, "--out", out];
+          if (options.limit) argsForPython.push("--limit", String(options.limit));
+          if (options["max-tokens"]) argsForPython.push("--max-tokens", String(options["max-tokens"]));
+          if (options.temperature) argsForPython.push("--temperature", String(options.temperature));
+          try {
+            ctx.ui.setStatus("tinker", `Tinker eval: ${action}`);
+            const { stdout, stderr } = await execFile("python3", argsForPython, {
+              cwd: ctx.cwd,
+              timeout: Number(options.timeout ?? 1_800_000),
+              maxBuffer: 12 * 1024 * 1024,
+            });
+            sendReport("Tinker eval completed", [
+              formatEvalSummary(out),
+              `\n## Output tail\n\`\`\`text\n${`${stdout}\n${stderr}`.trim().split(/\n/).slice(-60).join("\n")}\n\`\`\``,
+            ].join("\n"), "success");
+          } catch (error: any) {
+            sendReport("Tinker eval failed", [
+              error?.message ?? String(error),
+              error?.stdout ? `\n## stdout\n\`\`\`text\n${String(error.stdout).split(/\n/).slice(-80).join("\n")}\n\`\`\`` : "",
+              error?.stderr ? `\n## stderr\n\`\`\`text\n${String(error.stderr).split(/\n/).slice(-80).join("\n")}\n\`\`\`` : "",
+            ].filter(Boolean).join("\n"), "error");
+          } finally {
+            ctx.ui.setStatus("tinker", undefined);
+          }
+          return;
+        }
+
+        if (action === "compare") {
+          const baseline = positional[0] ? path.resolve(ctx.cwd, positional[0]) : path.resolve(ctx.cwd, "eval_results/baseline.json");
+          const candidate = positional[1] ? path.resolve(ctx.cwd, positional[1]) : "";
+          if (!candidate) {
+            sendReport("Tinker eval compare", "Usage: `/tinker eval compare eval_results/baseline.json eval_results/checkpoint.json`", "warning");
+            return;
+          }
+          try {
+            sendReport("Tinker eval comparison", compareEvalSummaries(baseline, candidate), "info");
+          } catch (error) {
+            sendReport("Tinker eval comparison", `Could not compare eval results: ${error instanceof Error ? error.message : String(error)}`, "error");
+          }
+          return;
+        }
+
+        sendReport("Tinker eval", `Unknown eval action: ${action}. Run \`/tinker eval help\`.`, "warning");
         return;
       }
 

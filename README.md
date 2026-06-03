@@ -17,6 +17,8 @@ A thin [Pi](https://pi.dev) package that makes it easier to use [Tinker](https:/
 /tinker setup
 /tinker init data/train.jsonl
 /tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
+/tinker eval init
+/tinker eval baseline --model Qwen/Qwen3.5-9B-Base
 /tinker sft data/train.jsonl --model Qwen/Qwen3.5-9B-Base --steps 20
 /tinker smoke train_sft.py
 /tinker monitor logs/my-run
@@ -27,7 +29,11 @@ A thin [Pi](https://pi.dev) package that makes it easier to use [Tinker](https:/
 /tinker use --remove <alias-or-tinker-path>
 ```
 
-### 3. Scaffolds editable SFT projects
+### 3. Adds eval-first before training
+
+`/tinker eval init` creates an editable `eval.py` and `data/eval.jsonl`. Users can run a baseline eval before training, evaluate a checkpoint after training, and compare wins/regressions.
+
+### 4. Scaffolds editable SFT projects
 
 `/tinker init ...` or `/tinker sft ...` writes:
 
@@ -38,7 +44,7 @@ tinker.yaml           # human-readable run summary
 notes/plan.md         # experiment plan template
 ```
 
-### 4. Registers trained checkpoints as Pi models
+### 5. Registers trained checkpoints as Pi models
 
 `/tinker use tinker://.../sampler_weights/... my-model` registers a checkpoint through Tinker's beta OpenAI-compatible inference endpoint. You can then select it with `/model` and quickly poke at the fine-tuned model inside Pi.
 
@@ -90,6 +96,8 @@ Inside a project with chat SFT data:
 /tinker setup
 /tinker init data/train.jsonl
 /tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
+/tinker eval init
+/tinker eval baseline --model Qwen/Qwen3.5-9B-Base --yes
 /tinker smoke train_sft.py
 /tinker monitor logs/<run-dir>
 ```

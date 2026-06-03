@@ -64,6 +64,61 @@ Options:
 | `--max-length` | `32768` | Length threshold for truncation-risk warnings |
 | `--quick` | false | Only run lightweight JSONL checks |
 
+## `/tinker eval init`
+
+Creates a minimal editable eval harness:
+
+- `eval.py`
+- `data/eval.jsonl`
+
+The eval JSONL format is:
+
+```json
+{"messages":[{"role":"user","content":"..."}],"expected":"...","match":"contains"}
+```
+
+Supported match modes:
+
+- `contains`
+- `exact`
+- `prefix`
+
+## `/tinker eval baseline [options]`
+
+Runs `eval.py` against a base model and writes `eval_results/baseline.json` by default.
+
+```text
+/tinker eval baseline --model Qwen/Qwen3.5-9B-Base --yes
+```
+
+## `/tinker eval checkpoint <tinker-path> [options]`
+
+Runs the same eval against a Tinker sampler checkpoint.
+
+```text
+/tinker eval checkpoint tinker://.../sampler_weights/... --model Qwen/Qwen3.5-9B-Base --yes
+```
+
+For both baseline and checkpoint:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--model` | `Qwen/Qwen3.5-9B-Base` | Base model / renderer model |
+| `--data` | `data/eval.jsonl` | Eval JSONL |
+| `--out` | `eval_results/baseline.json` or checkpoint-based name | Output JSON |
+| `--limit` | all | Limit examples |
+| `--max-tokens` | `128` | Generation limit |
+| `--temperature` | `0.0` | Sampling temperature |
+| `--yes` | false | Skip confirmation |
+
+## `/tinker eval compare <baseline.json> <candidate.json>`
+
+Compares two eval result files and reports accuracy delta, wins, and regressions.
+
+```text
+/tinker eval compare eval_results/baseline.json eval_results/step-20.json
+```
+
 ## `/tinker sft <jsonl> [options]`
 
 Scaffolds an editable supervised fine-tuning project using `tinker-cookbook` without the guided wizard.

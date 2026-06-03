@@ -48,6 +48,11 @@ async function main() {
     pi(["-p", "/tinker validate train.jsonl --quick"], { cwd: tmp });
     pi(["-p", "/tinker validate train.jsonl --model Qwen/Qwen3.5-9B-Base --examples 1"], { cwd: tmp });
 
+    // Eval scaffolding should create editable eval files.
+    pi(["-p", "/tinker eval init --force"], { cwd: tmp });
+    assert(existsSync(path.join(tmp, "eval.py")), "/tinker eval init did not create eval.py");
+    assert(existsSync(path.join(tmp, "data", "eval.jsonl")), "/tinker eval init did not create data/eval.jsonl");
+
     // /tinker init should generate the golden-path project files.
     pi(["-p", "/tinker init train.jsonl --metric quality --force"], { cwd: tmp });
     for (const file of ["README.md", "train_sft.py", "eval_checkpoint.py", "tinker.yaml", "notes/plan.md"]) {
@@ -55,7 +60,7 @@ async function main() {
     }
 
     // Generated Python should be syntactically valid without importing dependencies.
-    run("python3", ["-m", "py_compile", "train_sft.py", "eval_checkpoint.py"], { cwd: tmp });
+    run("python3", ["-m", "py_compile", "train_sft.py", "eval_checkpoint.py", "eval.py"], { cwd: tmp });
 
     const readme = readFileSync(path.join(tmp, "README.md"), "utf8");
     assert(readme.includes("/tinker monitor"), "generated README missing monitor instructions");
@@ -76,6 +81,12 @@ async function main() {
     pi(["-p", "/tinker status logs/run"], { cwd: tmp });
     pi(["-p", "/tinker monitor logs/run"], { cwd: tmp });
     pi(["-p", "/tinker monitor --stop"], { cwd: tmp });
+
+    // Eval comparison should work with normal eval result JSON.
+    await mkdir(path.join(tmp, "eval_results"), { recursive: true });
+    writeFileSync(path.join(tmp, "eval_results", "baseline.json"), JSON.stringify({ target: "base", num_examples: 2, num_correct: 1, accuracy: 0.5, results: [{ index: 1, correct: true, expected: "a", output: "a" }, { index: 2, correct: false, expected: "b", output: "x" }] }));
+    writeFileSync(path.join(tmp, "eval_results", "candidate.json"), JSON.stringify({ target: "checkpoint", num_examples: 2, num_correct: 2, accuracy: 1.0, results: [{ index: 1, correct: true, expected: "a", output: "a" }, { index: 2, correct: true, expected: "b", output: "b" }] }));
+    pi(["-p", "/tinker eval compare eval_results/baseline.json eval_results/candidate.json"], { cwd: tmp });
 
     // /tinker use should register a checkpoint model in Pi's model registry.
     pi(["-p", "/tinker use tinker://pi-tinker-test/sampler_weights/000001 pi-tinker-test"], { cwd: tmp });
