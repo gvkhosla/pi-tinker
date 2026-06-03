@@ -16,30 +16,56 @@ It does not install anything automatically. If packages are missing, install:
 uv pip install tinker-cookbook
 ```
 
-## `/tinker validate <jsonl>`
+## `/tinker init [jsonl] [options]`
 
-Runs a lightweight validation pass over a chat JSONL file.
-
-Checks:
-
-- file exists,
-- each non-empty line is valid JSON,
-- each row has `messages: [...]`,
-- each message has an expected role,
-- content is either a string or content-part array,
-- basic user/assistant counts.
-
-It also previews the first few conversations.
+Guided golden-path setup for a chat SFT project. In interactive Pi, it asks for missing values; in print/non-interactive mode, pass them as arguments.
 
 Example:
 
 ```text
-/tinker validate data/train.jsonl
+/tinker init data/train.jsonl --model Qwen/Qwen3.5-9B-Base --metric "held-out support quality"
 ```
+
+Generated files:
+
+- `README.md`
+- `train_sft.py`
+- `eval_checkpoint.py`
+- `tinker.yaml`
+- `notes/plan.md`
+
+Options are the same as `/tinker sft`, plus:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--metric` | prompt/TODO | What should improve before scale-up |
+
+## `/tinker validate <jsonl> [options]`
+
+Runs two validation layers:
+
+1. lightweight JSONL/message-shape checks in TypeScript,
+2. Python-backed Tinker Cookbook renderer/token-mask validation when dependencies are installed.
+
+The Python-backed check loads the recommended renderer for the model, tokenizes examples, reports token-length stats, reports trainable assistant-token stats, and decodes previews.
+
+Example:
+
+```text
+/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
+```
+
+Options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--model` | `Qwen/Qwen3.5-9B-Base` | Model for renderer/tokenizer validation |
+| `--examples` | `50` | Number of examples to tokenize/check |
+| `--quick` | false | Only run lightweight JSONL checks |
 
 ## `/tinker sft <jsonl> [options]`
 
-Scaffolds an editable supervised fine-tuning project using `tinker-cookbook`.
+Scaffolds an editable supervised fine-tuning project using `tinker-cookbook` without the guided wizard.
 
 Example:
 
@@ -60,20 +86,56 @@ Options:
 | `--log` | `logs/sft-<timestamp>` | Log/checkpoint directory |
 | `--force` | false | Overwrite existing scaffold files |
 
-Generated files:
+## `/tinker smoke [script] [--yes]`
 
-- `train_sft.py`
-- `eval_checkpoint.py`
-- `tinker.yaml`
-- `notes/plan.md`
-
-Run the smoke test first:
+Runs a 2-step smoke test:
 
 ```bash
-python train_sft.py max_steps=2
+python3 train_sft.py max_steps=2
 ```
 
-Then inspect metrics and decoded samples before scaling.
+It asks for confirmation in interactive mode because this can create a real Tinker training client and incur small API usage. Pass `--yes` to skip confirmation.
+
+Example:
+
+```text
+/tinker smoke train_sft.py --yes
+```
+
+Options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--timeout` | `1800000` | Timeout in milliseconds |
+
+## `/tinker monitor <log_dir>`
+
+Pins a live metrics widget above the editor and updates it every 5 seconds from:
+
+- `metrics.jsonl`
+- `checkpoints.jsonl`
+
+Example:
+
+```text
+/tinker monitor logs/sft-2026-06-03T18-08-42
+```
+
+Stop monitoring:
+
+```text
+/tinker monitor --stop
+```
+
+## `/tinker checkpoints <log_dir>`
+
+Reads `checkpoints.jsonl`, lists state/sampler checkpoints, and in interactive Pi lets you select a sampler checkpoint to register as a Pi model.
+
+Example:
+
+```text
+/tinker checkpoints logs/sft-2026-06-03T18-08-42
+```
 
 ## `/tinker status [log_dir]`
 
@@ -84,12 +146,6 @@ tinker run list --limit 10
 ```
 
 If `log_dir` is provided, also reads `metrics.jsonl` and displays a compact view of the latest numeric metrics.
-
-Example:
-
-```text
-/tinker status logs/sft-2026-06-03T18-08-42
-```
 
 ## `/tinker use <checkpoint> [alias]`
 

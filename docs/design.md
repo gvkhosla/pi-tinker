@@ -14,10 +14,12 @@ Adding another framework inside Pi would make the user experience worse. Pi shou
 
 - discovery: skills that tell Pi when and how to use Tinker,
 - setup checks,
-- lightweight data validation,
+- JSONL plus Python-backed renderer/token-mask validation,
+- guided project initialization,
 - scaffolding editable Tinker Cookbook scripts,
-- monitoring/log summarization,
-- checkpoint registration for interactive inspection in Pi.
+- smoke-test execution,
+- live monitoring/log summarization,
+- checkpoint discovery and registration for interactive inspection in Pi.
 
 Tinker/Tinker Cookbook handle:
 
@@ -41,12 +43,12 @@ Tinker/Tinker Cookbook handle:
 
 ```text
 /tinker setup
-/tinker validate data/train.jsonl
-/skill:tinker-research plan my SFT run
-/tinker sft data/train.jsonl --steps 2
-# user runs generated Python
-/tinker status logs/run
-/tinker use tinker://.../sampler_weights/... my-model
+/tinker init data/train.jsonl
+/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
+/skill:tinker-research plan my eval before scaling
+/tinker smoke train_sft.py
+/tinker monitor logs/run
+/tinker checkpoints logs/run
 ```
 
 The user can always open and edit the generated Python.

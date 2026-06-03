@@ -15,8 +15,12 @@ A thin [Pi](https://pi.dev) package that makes it easier to use [Tinker](https:/
 
 ```text
 /tinker setup
-/tinker validate data/train.jsonl
+/tinker init data/train.jsonl
+/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
 /tinker sft data/train.jsonl --model Qwen/Qwen3.5-9B-Base --steps 20
+/tinker smoke train_sft.py
+/tinker monitor logs/my-run
+/tinker checkpoints logs/my-run
 /tinker status [log_dir]
 /tinker use tinker://.../sampler_weights/... [alias]
 /tinker use --list
@@ -25,7 +29,7 @@ A thin [Pi](https://pi.dev) package that makes it easier to use [Tinker](https:/
 
 ### 3. Scaffolds editable SFT projects
 
-`/tinker sft ...` writes:
+`/tinker init ...` or `/tinker sft ...` writes:
 
 ```text
 train_sft.py          # editable tinker-cookbook SFT script
@@ -84,8 +88,10 @@ Inside a project with chat SFT data:
 
 ```text
 /tinker setup
-/tinker validate data/train.jsonl
-/tinker sft data/train.jsonl --steps 2
+/tinker init data/train.jsonl
+/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
+/tinker smoke train_sft.py
+/tinker monitor logs/<run-dir>
 ```
 
 Then run the generated smoke test:
