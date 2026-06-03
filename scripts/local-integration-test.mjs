@@ -43,6 +43,11 @@ async function main() {
     // Extension loads without crashing.
     pi(["--list-models"], { cwd: tmp });
 
+    // Basic commands should execute without crashing.
+    pi(["-p", "/tinker setup"], { cwd: tmp });
+    pi(["-p", "/tinker validate train.jsonl --quick"], { cwd: tmp });
+    pi(["-p", "/tinker validate train.jsonl --model Qwen/Qwen3.5-9B-Base --examples 1"], { cwd: tmp });
+
     // /tinker init should generate the golden-path project files.
     pi(["-p", "/tinker init train.jsonl --metric quality --force"], { cwd: tmp });
     for (const file of ["README.md", "train_sft.py", "eval_checkpoint.py", "tinker.yaml", "notes/plan.md"]) {
