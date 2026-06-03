@@ -1,0 +1,9 @@
+pi-tinker
+
+This package includes Pi-specific adaptations of Tinker skills from the
+Thinking Machines Lab tinker-cookbook repository:
+
+  https://github.com/thinking-machines-lab/tinker-cookbook
+
+The adapted skill content is licensed under the Apache License, Version 2.0.
+See LICENSE for details.
