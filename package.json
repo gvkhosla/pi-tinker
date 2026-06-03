@@ -3,13 +3,13 @@
   "version": "0.2.0",
   "description": "Pi package for making Tinker fine-tuning workflows easier: skills, setup checks, SFT scaffolding, checkpoint model registration.",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/your-org/pi-tinker#readme",
+  "homepage": "https://github.com/gvkhosla/pi-tinker#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/pi-tinker.git"
+    "url": "git+https://github.com/gvkhosla/pi-tinker.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/pi-tinker/issues"
+    "url": "https://github.com/gvkhosla/pi-tinker/issues"
   },
   "keywords": [
     "pi-package",
