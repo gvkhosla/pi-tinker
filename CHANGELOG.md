@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1
+
+Onboarding clarity pass:
+
+- Added `/tinker demo` as the simplest zero-data first command.
+- Added README sections for who this is for, 30-second demo, 10-minute path, copy-paste CSV, and agent guidance.
+- Added `AGENTS.md` so coding agents know the intended workflows and boundaries.
+- Added `examples/customer-support.csv` as a copy-paste starter dataset.
+
 ## 0.6.0
 
 Golden-path onboarding upgrade:

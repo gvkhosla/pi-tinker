@@ -1,5 +1,17 @@
 # `/tinker` command reference
 
+## `/tinker demo`
+
+Zero-data demo. Copies the built-in `customer-support` example, creates a guided project, writes editable training/eval files, and shows the next step.
+
+```text
+/tinker demo
+/tinker next
+/tinker doctor
+```
+
+This is the best first command for someone who wants to see what `pi-tinker` can do before bringing real data.
+
 ## `/tinker new [input] [options]`
 
 The easiest entrypoint. Starts the golden path from CSV, JSON, JSONL, TXT/MD, a docs directory, or a built-in example.
@@ -61,6 +73,7 @@ Lists or copies concrete starter examples.
 ```text
 /tinker examples list
 /tinker examples copy customer-support
+/tinker demo
 /tinker new --example structured-extraction
 ```
 

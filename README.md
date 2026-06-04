@@ -4,6 +4,64 @@ Fine-tune an open-source model with [Tinker](https://thinkingmachines.ai/tinker/
 
 `pi-tinker` is intentionally **not** another training framework. It is a beginner-friendly golden path around Tinker/Tinker Cookbook: bring CSV/JSON/JSONL/docs, convert and validate data, create editable Python, run baseline evals, smoke-test training, monitor checkpoints, compare before/after quality, and chat with the trained checkpoint in Pi.
 
+## Who this is for
+
+Builders with examples who want to fine-tune an open model but do **not** yet know the Tinker/post-training workflow. If you have support tickets, prompt/completion pairs, extraction examples, writing examples, or task-specific eval cases, this helps you get to a useful first run faster.
+
+## 30-second demo, no data required
+
+```bash
+pi install git:github.com/gvkhosla/pi-tinker
+```
+
+```text
+/tinker demo
+/tinker next
+/tinker doctor
+```
+
+`/tinker demo` creates a small customer-support fine-tuning project so you can see the whole flow before bringing your own data.
+
+## 10-minute path with your own data
+
+Create a tiny CSV:
+
+```csv
+question,answer
+How do I cancel?,Go to Settings → Billing → Cancel subscription.
+My order is late,Sorry — send us your order number and we’ll check it.
+The app crashes after login,Update the app and restart. If it still crashes, send your device type and app version.
+```
+
+Then run:
+
+```text
+/tinker new data.csv --goal "better customer support answers"
+/tinker doctor
+/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
+/tinker eval baseline --model Qwen/Qwen3.5-9B-Base --yes
+/tinker smoke train_sft.py --yes
+/tinker next
+```
+
+The extension keeps showing the next safe step: validate → baseline eval → 2-step smoke test → train → compare → chat with checkpoint.
+
+If you try it and get stuck, please open an issue with the command you ran and the `/tinker doctor` output.
+
+## For coding agents
+
+If you are using an agent to drive this repo, see [`AGENTS.md`](AGENTS.md). The intended first command is usually:
+
+```text
+/tinker demo
+```
+
+or, with user data:
+
+```text
+/tinker new <csv|json|jsonl|docs-dir> --goal "what should improve"
+```
+
 ## What it does right now
 
 ### 1. Adds Tinker skills to Pi
@@ -14,6 +72,7 @@ Fine-tune an open-source model with [Tinker](https://thinkingmachines.ai/tinker/
 ### 2. Adds a `/tinker` command
 
 ```text
+/tinker demo
 /tinker new data.csv --goal "better support answers"
 /tinker new --example customer-support
 /tinker prepare data.csv --out data/train.jsonl
@@ -126,7 +185,7 @@ Fastest path with a CSV/JSONL/docs input:
 No data yet? Try a concrete example:
 
 ```text
-/tinker new --example customer-support
+/tinker demo
 /tinker next
 ```
 
@@ -184,6 +243,8 @@ extensions/tinker.ts       # Pi extension with /tinker command and provider regi
 skills/tinker-research/    # Pi skill adapted from tinker-cookbook research skill
 skills/tinker-debug/       # Pi skill adapted from tinker-cookbook debug skill
 docs/                      # user/developer docs
+examples/customer-support.csv # copy-paste starter CSV
+AGENTS.md                  # quickstart and boundaries for coding agents
 scripts/smoke-test.mjs     # lightweight repository checks
 ```
 

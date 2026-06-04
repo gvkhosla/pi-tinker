@@ -56,6 +56,8 @@ async function main() {
     pi(["-p", "/tinker examples copy customer-support --force"], { cwd: tmp });
     assert(existsSync(path.join(tmp, "examples", "customer-support", "train.jsonl")), "/tinker examples copy did not create train.jsonl");
     pi(["-p", "/tinker recommend --goal support-quality --data data/prepared.jsonl"], { cwd: tmp });
+    pi(["-p", "/tinker demo --force"], { cwd: tmp });
+    assert(existsSync(path.join(tmp, ".tinker-pi", "state.json")), "/tinker demo did not create wizard state");
     pi(["-p", "/tinker new support.csv --goal support-quality --force"], { cwd: tmp });
     assert(existsSync(path.join(tmp, "data", "train.jsonl")), "/tinker new did not prepare data/train.jsonl");
     assert(existsSync(path.join(tmp, "train_sft.py")), "/tinker new did not create train_sft.py");

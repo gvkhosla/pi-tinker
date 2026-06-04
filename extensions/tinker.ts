@@ -1468,6 +1468,7 @@ export default async function (pi: ExtensionAPI) {
       if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
         sendReport("Tinker helper", [
           "Commands:",
+          "- `/tinker demo` — zero-data customer-support demo project.",
           "- `/tinker new [data.csv|data.jsonl|docs/] --goal ...` — golden path from data to first fine-tune.",
           "- `/tinker prepare data.csv --out data/train.jsonl` — convert CSV/JSON/docs into chat JSONL.",
           "- `/tinker recommend --goal ...` — pick starter model/settings and fastest path.",
@@ -1494,13 +1495,13 @@ export default async function (pi: ExtensionAPI) {
       }
 
 
-      if (subcommand === "new" || subcommand === "finetune") {
+      if (subcommand === "new" || subcommand === "finetune" || subcommand === "demo") {
         const { positional, options } = parseOptions(rest);
         const force = options.force === true;
         let dataFileInput = positional[0] ? String(positional[0]) : "";
         let metric = String(options.goal ?? options.metric ?? "");
         let model = String(options.model ?? "");
-        const exampleSlug = options.example === true ? "customer-support" : options.example ? String(options.example) : "";
+        const exampleSlug = subcommand === "demo" ? "customer-support" : options.example === true ? "customer-support" : options.example ? String(options.example) : "";
 
         if (exampleSlug) {
           try {
