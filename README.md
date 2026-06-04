@@ -1,8 +1,8 @@
 # pi-tinker
 
-A thin [Pi](https://pi.dev) package that makes it easier to use [Tinker](https://thinkingmachines.ai/tinker/) and [`tinker-cookbook`](https://github.com/thinking-machines-lab/tinker-cookbook) for practical model fine-tuning.
+Fine-tune an open-source model with [Tinker](https://thinkingmachines.ai/tinker/) from inside [Pi](https://pi.dev) without learning the whole post-training stack first.
 
-`pi-tinker` is intentionally **not** another training framework. It keeps Tinker Cookbook as the source of truth, generates editable Python, and gives Pi enough Tinker-specific context to help users set up, validate, monitor, debug, and inspect fine-tuning runs.
+`pi-tinker` is intentionally **not** another training framework. It is a beginner-friendly golden path around Tinker/Tinker Cookbook: bring CSV/JSON/JSONL/docs, convert and validate data, create editable Python, run baseline evals, smoke-test training, monitor checkpoints, compare before/after quality, and chat with the trained checkpoint in Pi.
 
 ## What it does right now
 
@@ -14,6 +14,12 @@ A thin [Pi](https://pi.dev) package that makes it easier to use [Tinker](https:/
 ### 2. Adds a `/tinker` command
 
 ```text
+/tinker new data.csv --goal "better support answers"
+/tinker new --example customer-support
+/tinker prepare data.csv --out data/train.jsonl
+/tinker recommend --goal "structured extraction"
+/tinker doctor
+/tinker examples list
 /tinker start data/train.jsonl
 /tinker next
 /tinker reset
@@ -32,15 +38,24 @@ A thin [Pi](https://pi.dev) package that makes it easier to use [Tinker](https:/
 /tinker use --remove <alias-or-tinker-path>
 ```
 
-### 3. Adds a beginner step-by-step wizard
+### 3. Adds a real golden path for beginners
 
-`/tinker start` creates a guided flow for people who have never fine-tuned before. It tracks progress in `.tinker-pi/state.json` and always shows the next recommended action: environment, data, validation, baseline eval, smoke test, training, checkpoint eval, comparison, and chatting with the checkpoint.
+`/tinker new` is the fastest entrypoint. It can start from an existing chat JSONL file, convert CSV/JSON/docs into chat JSONL, or copy a built-in example. It scaffolds the project, recommends starter settings, creates wizard state, and shows the next command.
 
-### 4. Adds eval-first before training
+`/tinker start` remains the step-by-step wizard for people who already have training JSONL. It tracks progress in `.tinker-pi/state.json` and always shows the next recommended action: environment, data, validation, baseline eval, smoke test, training, checkpoint eval, comparison, and chatting with the checkpoint.
+
+### 4. Adds data preparation, recommendations, doctor, and examples
+
+- `/tinker prepare` converts CSV, JSON, JSONL prompt/response rows, TXT/MD files, or docs directories into Tinker chat JSONL.
+- `/tinker recommend` picks a starter model/method/settings from the user's goal.
+- `/tinker doctor` checks API key, Python, Tinker imports, generated scripts, selected data, and next step.
+- `/tinker examples` provides concrete starter tasks: customer support, structured extraction, and concise writing.
+
+### 5. Adds eval-first before training
 
 `/tinker eval init` creates an editable `eval.py` and `data/eval.jsonl`. Users can run a baseline eval before training, evaluate a checkpoint after training, and compare wins/regressions.
 
-### 5. Scaffolds editable SFT projects
+### 6. Scaffolds editable SFT projects
 
 `/tinker init ...` or `/tinker sft ...` writes:
 
@@ -51,7 +66,7 @@ tinker.yaml           # human-readable run summary
 notes/plan.md         # experiment plan template
 ```
 
-### 6. Registers trained checkpoints as Pi models
+### 7. Registers trained checkpoints as Pi models
 
 `/tinker use tinker://.../sampler_weights/... my-model` registers a checkpoint through Tinker's beta OpenAI-compatible inference endpoint. You can then select it with `/model` and quickly poke at the fine-tuned model inside Pi.
 
@@ -71,10 +86,10 @@ For one run only:
 pi -e /path/to/pi-tinker
 ```
 
-### From GitHub once published
+### From GitHub
 
 ```bash
-pi install git:github.com/<you>/pi-tinker
+pi install git:github.com/gvkhosla/pi-tinker
 ```
 
 ## Requirements
@@ -97,18 +112,22 @@ python3 -m pip install tinker-cookbook
 
 ## Quickstart
 
-Inside a project with chat SFT data:
+Fastest path with a CSV/JSONL/docs input:
 
 ```text
-/tinker start data/train.jsonl
-/tinker next
-/tinker setup
-/tinker init data/train.jsonl
+/tinker new data.csv --goal "better customer support answers"
+/tinker doctor
 /tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
-/tinker eval init
 /tinker eval baseline --model Qwen/Qwen3.5-9B-Base --yes
-/tinker smoke train_sft.py
+/tinker smoke train_sft.py --yes
 /tinker monitor logs/<run-dir>
+```
+
+No data yet? Try a concrete example:
+
+```text
+/tinker new --example customer-support
+/tinker next
 ```
 
 Then run the generated smoke test:
@@ -171,7 +190,7 @@ scripts/smoke-test.mjs     # lightweight repository checks
 ## Development
 
 ```bash
-npm run smoke-test
+npm test
 pi -e . --list-models
 ```
 

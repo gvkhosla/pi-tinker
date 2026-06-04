@@ -48,6 +48,19 @@ async function main() {
     pi(["-p", "/tinker validate train.jsonl --quick"], { cwd: tmp });
     pi(["-p", "/tinker validate train.jsonl --model Qwen/Qwen3.5-9B-Base --examples 1"], { cwd: tmp });
 
+    // Golden-path onboarding commands should convert data, recommend settings, create examples, and diagnose readiness.
+    writeFileSync(path.join(tmp, "support.csv"), "question,answer\nWhere do I cancel?,Go to Settings then Billing.\nMy order is late,Sorry — send us your order number and we will check it.\n");
+    pi(["-p", "/tinker prepare support.csv --out data/prepared.jsonl"], { cwd: tmp });
+    assert(existsSync(path.join(tmp, "data", "prepared.jsonl")), "/tinker prepare did not write data/prepared.jsonl");
+    pi(["-p", "/tinker examples list"], { cwd: tmp });
+    pi(["-p", "/tinker examples copy customer-support --force"], { cwd: tmp });
+    assert(existsSync(path.join(tmp, "examples", "customer-support", "train.jsonl")), "/tinker examples copy did not create train.jsonl");
+    pi(["-p", "/tinker recommend --goal support-quality --data data/prepared.jsonl"], { cwd: tmp });
+    pi(["-p", "/tinker new support.csv --goal support-quality --force"], { cwd: tmp });
+    assert(existsSync(path.join(tmp, "data", "train.jsonl")), "/tinker new did not prepare data/train.jsonl");
+    assert(existsSync(path.join(tmp, "train_sft.py")), "/tinker new did not create train_sft.py");
+    pi(["-p", "/tinker doctor data/train.jsonl"], { cwd: tmp });
+
     // Beginner wizard should create state, scaffold files, show next step, and reset cleanly.
     pi(["-p", "/tinker start train.jsonl --metric quality --force"], { cwd: tmp });
     assert(existsSync(path.join(tmp, ".tinker-pi", "state.json")), "/tinker start did not create wizard state");

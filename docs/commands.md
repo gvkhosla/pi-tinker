@@ -1,5 +1,75 @@
 # `/tinker` command reference
 
+## `/tinker new [input] [options]`
+
+The easiest entrypoint. Starts the golden path from CSV, JSON, JSONL, TXT/MD, a docs directory, or a built-in example.
+
+```text
+/tinker new data.csv --goal "better customer support answers"
+/tinker new data/train.jsonl --goal "structured extraction accuracy"
+/tinker new --example customer-support
+```
+
+If the input is not chat JSONL, `/tinker new` converts it to `data/train.jsonl`, scaffolds editable Python/eval files, creates `.tinker-pi/state.json`, recommends starter settings, and shows the next wizard step.
+
+Options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--goal` / `--metric` | prompt/TODO | What should improve |
+| `--model` | `Qwen/Qwen3.5-9B-Base` | Starter model |
+| `--example` | false | Built-in example slug, e.g. `customer-support` |
+| `--out` | `data/train.jsonl` | Output path when converting data |
+| `--prepare` | false | Force conversion even for JSONL |
+| `--force` | false | Overwrite generated files |
+
+## `/tinker prepare <input> [options]`
+
+Converts common data into Tinker chat JSONL.
+
+Supported inputs:
+
+- CSV with `question`/`answer`, `prompt`/`completion`, `input`/`output`, or `messages` columns.
+- JSON array, or object with `examples[]`/`data[]`.
+- JSONL with `messages[]` or prompt/response-style fields.
+- TXT/MD files or directories for starter document-summary examples.
+
+```text
+/tinker prepare support.csv --out data/train.jsonl
+```
+
+## `/tinker recommend [goal] [options]`
+
+Gives a simple starter model/method/settings recommendation and the next commands.
+
+```text
+/tinker recommend --goal "valid JSON extraction" --data data/train.jsonl
+```
+
+## `/tinker doctor [jsonl]`
+
+Diagnoses local setup and project readiness: API key, Python, `uv`, Tinker CLI, Python imports, generated files, script compilation, selected data, and next wizard step.
+
+```text
+/tinker doctor data/train.jsonl
+```
+
+## `/tinker examples list|copy [slug]`
+
+Lists or copies concrete starter examples.
+
+```text
+/tinker examples list
+/tinker examples copy customer-support
+/tinker new --example structured-extraction
+```
+
+Current examples:
+
+- `customer-support`
+- `structured-extraction`
+- `concise-writing`
+
 ## `/tinker start [jsonl] [options]`
 
 Beginner step-by-step fine-tuning wizard. This is the simplest entrypoint for people who have examples and want to improve an open model without knowing the Tinker internals.

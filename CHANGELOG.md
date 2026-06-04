@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+
+Golden-path onboarding upgrade:
+
+- Added `/tinker new` / `/tinker finetune` as the fastest zero-to-first-run entrypoint.
+- Added `/tinker prepare` to convert CSV, JSON, JSONL prompt/response rows, TXT/MD files, or docs directories into chat JSONL.
+- Added `/tinker recommend` for beginner-friendly model/method/settings suggestions from a goal.
+- Added `/tinker doctor` for setup and project readiness diagnostics.
+- Added `/tinker examples` with concrete customer-support, structured-extraction, and concise-writing starter tasks.
+- Updated README/docs around a 10-minute fine-tuning golden path.
+- Added `npm test` and expanded local integration coverage for onboarding commands.
+
 ## 0.5.0
 
 Beginner wizard:

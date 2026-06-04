@@ -643,6 +643,348 @@ function makeExampleEvalJsonl() {
   ].map((row) => JSON.stringify(row)).join("\n") + "\n";
 }
 
+
+type PreparedDataset = {
+  inputPath: string;
+  outFile: string;
+  format: string;
+  rows: number;
+  warnings: string[];
+  samples: string[];
+};
+
+type ExampleTemplate = {
+  slug: string;
+  title: string;
+  goal: string;
+  trainRows: Array<Record<string, unknown>>;
+  evalRows: Array<Record<string, unknown>>;
+};
+
+const EXAMPLE_TEMPLATES: ExampleTemplate[] = [
+  {
+    slug: "customer-support",
+    title: "Customer support tone + answer quality",
+    goal: "More accurate, concise, empathetic customer support answers",
+    trainRows: [
+      { messages: [{ role: "user", content: "My package says delivered but it isn't here. What do I do?" }, { role: "assistant", content: "I’m sorry — that’s frustrating. Please check nearby doors or your building mail area first. If it still hasn’t arrived, send us your order number and we’ll open a carrier trace or arrange a replacement." }] },
+      { messages: [{ role: "user", content: "Can I cancel my subscription?" }, { role: "assistant", content: "Yes. Go to Settings → Billing → Cancel subscription. Your access stays active until the end of the current billing period." }] },
+      { messages: [{ role: "user", content: "The app keeps crashing after login." }, { role: "assistant", content: "Sorry about that. Please update to the latest version, restart the app, and try again. If it still crashes, send us your device type and app version so we can investigate." }] },
+    ],
+    evalRows: [
+      { messages: [{ role: "user", content: "I was charged twice this month." }], expected: "sorry", match: "contains" },
+      { messages: [{ role: "user", content: "Where do I cancel?" }], expected: "Settings", match: "contains" },
+    ],
+  },
+  {
+    slug: "structured-extraction",
+    title: "Structured JSON extraction",
+    goal: "Higher valid-JSON extraction accuracy on domain text",
+    trainRows: [
+      { messages: [{ role: "user", content: "Extract JSON: Jane Doe works at Acme as VP Sales." }, { role: "assistant", content: '{"name":"Jane Doe","company":"Acme","title":"VP Sales"}' }] },
+      { messages: [{ role: "user", content: "Extract JSON: Omar Khan, CTO, Northstar Labs." }, { role: "assistant", content: '{"name":"Omar Khan","company":"Northstar Labs","title":"CTO"}' }] },
+      { messages: [{ role: "user", content: "Extract JSON: No company listed for Priya Shah." }, { role: "assistant", content: '{"name":"Priya Shah","company":null,"title":null}' }] },
+    ],
+    evalRows: [
+      { messages: [{ role: "user", content: "Extract JSON: Alex Lee is Head of Ops at Meridian." }], expected: '"company":"Meridian"', match: "contains" },
+      { messages: [{ role: "user", content: "Extract JSON: Taylor Smith, no role, Orbit." }], expected: '"company":"Orbit"', match: "contains" },
+    ],
+  },
+  {
+    slug: "concise-writing",
+    title: "Concise rewriting",
+    goal: "Shorter, clearer rewrites that preserve meaning",
+    trainRows: [
+      { messages: [{ role: "user", content: "Rewrite concisely: We are reaching out today in order to inform you that your requested refund has now been successfully processed." }, { role: "assistant", content: "Your refund has been processed." }] },
+      { messages: [{ role: "user", content: "Rewrite concisely: Due to the fact that the meeting was moved, we will need to make an adjustment to the current schedule." }, { role: "assistant", content: "Because the meeting moved, we need to adjust the schedule." }] },
+      { messages: [{ role: "user", content: "Rewrite concisely: At this point in time, we do not have sufficient information to make a final decision." }, { role: "assistant", content: "We don’t have enough information to decide yet." }] },
+    ],
+    evalRows: [
+      { messages: [{ role: "user", content: "Rewrite concisely: We wanted to let you know that your account has been approved." }], expected: "approved", match: "contains" },
+      { messages: [{ role: "user", content: "Rewrite concisely: In the event that you need assistance, please contact support." }], expected: "support", match: "contains" },
+    ],
+  },
+];
+
+function jsonl(rows: Array<Record<string, unknown>>): string {
+  return rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    const next = text[i + 1];
+    if (quoted && ch === '"' && next === '"') {
+      field += '"';
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (ch === "," && !quoted) {
+      row.push(field);
+      field = "";
+      continue;
+    }
+    if ((ch === "\n" || ch === "\r") && !quoted) {
+      if (ch === "\r" && next === "\n") i++;
+      row.push(field);
+      if (row.some((x) => x.trim())) rows.push(row);
+      row = [];
+      field = "";
+      continue;
+    }
+    field += ch;
+  }
+  row.push(field);
+  if (row.some((x) => x.trim())) rows.push(row);
+  return rows;
+}
+
+function normalizeHeader(header: string): string {
+  return header.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function pickColumn(headers: string[], candidates: string[]): number {
+  const normalized = headers.map(normalizeHeader);
+  for (const candidate of candidates) {
+    const idx = normalized.indexOf(candidate);
+    if (idx >= 0) return idx;
+  }
+  for (const candidate of candidates) {
+    const idx = normalized.findIndex((h) => h.includes(candidate));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function rowToTrainingExample(row: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (Array.isArray(row.messages)) return { messages: row.messages };
+  const system = typeof row.system === "string" ? row.system : typeof row.instruction === "string" ? row.instruction : undefined;
+  const input = String(row.user ?? row.question ?? row.prompt ?? row.input ?? row.query ?? "").trim();
+  const output = String(row.assistant ?? row.answer ?? row.completion ?? row.output ?? row.response ?? "").trim();
+  if (!input || !output) return undefined;
+  const messages: Array<Record<string, string>> = [];
+  if (system) messages.push({ role: "system", content: system });
+  messages.push({ role: "user", content: input });
+  messages.push({ role: "assistant", content: output });
+  return { messages };
+}
+
+function collectTextFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const target = path.join(dir, name);
+    const stat = statSync(target);
+    if (stat.isDirectory()) out.push(...collectTextFiles(target));
+    else if (/\.(md|mdx|txt)$/i.test(name)) out.push(target);
+  }
+  return out;
+}
+
+async function prepareDataset(inputPath: string, outFile: string): Promise<PreparedDataset> {
+  const warnings: string[] = [];
+  const rows: Array<Record<string, unknown>> = [];
+  const stat = statSync(inputPath);
+  let format = "unknown";
+
+  if (stat.isDirectory()) {
+    format = "docs-directory";
+    for (const file of collectTextFiles(inputPath).slice(0, 500)) {
+      const text = readFileSync(file, "utf8").replace(/\s+/g, " ").trim();
+      if (!text) continue;
+      const chunks = text.match(/.{1,3500}(?:\s|$)/g) ?? [text.slice(0, 3500)];
+      for (const [idx, chunk] of chunks.slice(0, 20).entries()) {
+        rows.push({
+          messages: [
+            { role: "user", content: `Summarize the useful facts from ${path.basename(file)}${chunks.length > 1 ? ` part ${idx + 1}` : ""}:\n\n${chunk.trim()}` },
+            { role: "assistant", content: chunk.trim().slice(0, 900) },
+          ],
+          source: path.relative(path.dirname(inputPath), file),
+        });
+      }
+    }
+    warnings.push("Docs were converted into starter summarization examples. For best results, replace assistant outputs with the exact behavior you want the model to learn.");
+  } else if (/\.csv$/i.test(inputPath)) {
+    format = "csv";
+    const parsed = parseCsv(readFileSync(inputPath, "utf8"));
+    if (parsed.length < 2) throw new Error("CSV needs a header row and at least one data row.");
+    const headers = parsed[0]!.map((h) => h.trim());
+    const userIdx = pickColumn(headers, ["user", "question", "prompt", "input", "query"]);
+    const assistantIdx = pickColumn(headers, ["assistant", "answer", "completion", "output", "response"]);
+    const systemIdx = pickColumn(headers, ["system", "instruction"]);
+    const messagesIdx = pickColumn(headers, ["messages"]);
+    for (const values of parsed.slice(1)) {
+      if (messagesIdx >= 0) {
+        try {
+          const messages = JSON.parse(values[messagesIdx] ?? "");
+          if (Array.isArray(messages)) rows.push({ messages });
+          else warnings.push("Skipped a CSV row whose messages column was not a JSON array.");
+        } catch {
+          warnings.push("Skipped a CSV row whose messages column was not valid JSON.");
+        }
+        continue;
+      }
+      if (userIdx < 0 || assistantIdx < 0) throw new Error(`CSV needs columns like question/prompt/input and answer/response/output. Found: ${headers.join(", ")}`);
+      const messages: Array<Record<string, string>> = [];
+      const system = systemIdx >= 0 ? String(values[systemIdx] ?? "").trim() : "";
+      const user = String(values[userIdx] ?? "").trim();
+      const assistant = String(values[assistantIdx] ?? "").trim();
+      if (!user || !assistant) continue;
+      if (system) messages.push({ role: "system", content: system });
+      messages.push({ role: "user", content: user });
+      messages.push({ role: "assistant", content: assistant });
+      rows.push({ messages });
+    }
+  } else if (/\.jsonl$/i.test(inputPath)) {
+    format = "jsonl";
+    for (const line of readFileSync(inputPath, "utf8").split(/\n/).filter((x) => x.trim())) {
+      const converted = rowToTrainingExample(JSON.parse(line));
+      if (converted) rows.push(converted);
+      else warnings.push("Skipped a JSONL row that did not contain messages[] or recognizable prompt/response fields.");
+    }
+  } else if (/\.json$/i.test(inputPath)) {
+    format = "json";
+    const parsed = JSON.parse(readFileSync(inputPath, "utf8"));
+    const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed.examples) ? parsed.examples : Array.isArray(parsed.data) ? parsed.data : [];
+    if (!Array.isArray(items) || items.length === 0) throw new Error("JSON should be an array, or contain examples[]/data[].");
+    for (const item of items) {
+      const converted = item && typeof item === "object" ? rowToTrainingExample(item as Record<string, unknown>) : undefined;
+      if (converted) rows.push(converted);
+      else warnings.push("Skipped a JSON item that did not contain messages[] or recognizable prompt/response fields.");
+    }
+  } else if (/\.(md|mdx|txt)$/i.test(inputPath)) {
+    format = "document";
+    const text = readFileSync(inputPath, "utf8").replace(/\s+/g, " ").trim();
+    for (const chunk of (text.match(/.{1,3500}(?:\s|$)/g) ?? [text]).slice(0, 100)) {
+      rows.push({ messages: [{ role: "user", content: `Summarize the useful facts from this document:\n\n${chunk.trim()}` }, { role: "assistant", content: chunk.trim().slice(0, 900) }] });
+    }
+    warnings.push("A raw document creates weak starter examples. Convert real question/answer or input/output pairs when possible.");
+  } else {
+    throw new Error("Unsupported input. Use CSV, JSON, JSONL, TXT/MD, or a directory of TXT/MD files.");
+  }
+
+  if (rows.length === 0) throw new Error("No usable training rows found.");
+  await mkdir(path.dirname(outFile), { recursive: true });
+  await writeFile(outFile, jsonl(rows));
+  return {
+    inputPath,
+    outFile,
+    format,
+    rows: rows.length,
+    warnings,
+    samples: rows.slice(0, 3).map((row) => JSON.stringify(row).slice(0, 1000)),
+  };
+}
+
+function recommendPlan(goal: string, dataRows?: number): string {
+  const g = goal.toLowerCase();
+  const structured = /json|extract|classif|label|schema|sql|regex|parse/.test(g);
+  const reasoning = /math|reason|proof|solve|logic|agent|tool/.test(g);
+  const writing = /write|tone|support|summar|rewrite|style|email|copy/.test(g);
+  const model = reasoning ? "Qwen/Qwen3.5-35B-A3B-Base" : structured ? "Qwen/Qwen3.5-9B-Base" : "Qwen/Qwen3.5-9B-Base";
+  const examples = dataRows ? `${dataRows} detected rows` : "unknown row count";
+  const rowsAdvice = !dataRows ? "Start with 20–100 high-quality examples for a smoke test, then scale." : dataRows < 20 ? "Good for a smoke test only; add more examples before expecting durable quality gains." : dataRows < 200 ? "Enough for an early SFT run if examples are high quality." : "Enough to try a serious SFT run after baseline eval passes.";
+  const task = structured ? "SFT with strict eval for valid outputs" : reasoning ? "SFT first; consider RL only after strong evals exist" : writing ? "SFT with before/after human or rubric eval" : "SFT golden path";
+  return [
+    `# Tinker recommendation`,
+    `- Goal: ${goal || "not provided"}`,
+    `- Data: ${examples}`,
+    `- Recommended first model: \`${model}\``,
+    `- First training method: ${task}`,
+    `- Starter settings: \`max_steps=20\`, \`batch_size=8\`, \`lr=2e-4\`, 2-step smoke test before scale-up`,
+    `- Data advice: ${rowsAdvice}`,
+    "",
+    "## Fastest path",
+    "```text",
+    "/tinker new data/train.jsonl --goal \"" + (goal || "what should improve") + "\" --model " + model,
+    "/tinker doctor",
+    "/tinker validate data/train.jsonl --model " + model,
+    "/tinker eval baseline --model " + model + " --yes",
+    "/tinker smoke train_sft.py --yes",
+    "```",
+  ].join("\n");
+}
+
+function templateBySlug(slug: string): ExampleTemplate | undefined {
+  return EXAMPLE_TEMPLATES.find((t) => t.slug === slug);
+}
+
+async function writeExampleTemplate(cwd: string, slug: string, force = false): Promise<{ template: ExampleTemplate; files: string[] }> {
+  const template = templateBySlug(slug);
+  if (!template) throw new Error(`Unknown example ${slug}. Available: ${EXAMPLE_TEMPLATES.map((t) => t.slug).join(", ")}`);
+  const files = [
+    { rel: path.join("examples", slug, "train.jsonl"), content: jsonl(template.trainRows) },
+    { rel: path.join("examples", slug, "eval.jsonl"), content: jsonl(template.evalRows) },
+    { rel: path.join("examples", slug, "README.md"), content: `# ${template.title}\n\nGoal: ${template.goal}\n\nTry:\n\n\`\`\`text\n/tinker new examples/${slug}/train.jsonl --goal "${template.goal}" --force\n/tinker validate examples/${slug}/train.jsonl --quick\n\`\`\`\n` },
+  ];
+  const written: string[] = [];
+  for (const file of files) {
+    const target = path.join(cwd, file.rel);
+    if (existsSync(target) && !force) continue;
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, file.content);
+    written.push(file.rel);
+  }
+  return { template, files: written };
+}
+
+async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<string> {
+  const wizard = await readWizardState(cwd);
+  const dataFile = dataFileArg ? path.resolve(cwd, dataFileArg) : wizard?.dataFile;
+  const checks: string[] = [];
+  checks.push(process.env.TINKER_API_KEY ? "✅ TINKER_API_KEY is set" : "❌ TINKER_API_KEY is missing");
+  checks.push((await commandExists("python3")) ? "✅ python3 found" : "❌ python3 not found");
+  checks.push((await commandExists("uv")) ? "✅ uv found" : "⚠️ uv not found; pip fallback is okay");
+  checks.push((await commandExists("tinker")) ? "✅ tinker CLI found" : "⚠️ tinker CLI not found");
+  for (const mod of ["tinker", "tinker_cookbook", "chz"]) {
+    try {
+      await execFile("python3", ["-c", `import ${mod}; print('ok')`], { cwd, timeout: 20_000 });
+      checks.push(`✅ Python import ${mod}`);
+    } catch {
+      checks.push(`⚠️ Python cannot import ${mod}`);
+    }
+  }
+  checks.push(existsSync(path.join(cwd, "train_sft.py")) ? "✅ train_sft.py exists" : "⬜ train_sft.py missing; run /tinker new or /tinker init");
+  checks.push(existsSync(path.join(cwd, "eval.py")) ? "✅ eval.py exists" : "⬜ eval.py missing; run /tinker eval init");
+  if (dataFile) checks.push(existsSync(dataFile) ? `✅ data file exists: ${rel(cwd, dataFile)}` : `❌ data file missing: ${dataFile}`);
+  else checks.push("⬜ no data file selected yet");
+  if (existsSync(path.join(cwd, "train_sft.py"))) {
+    try {
+      await execFile("python3", ["-m", "py_compile", "train_sft.py"], { cwd, timeout: 20_000 });
+      checks.push("✅ train_sft.py compiles");
+    } catch (error: any) {
+      checks.push(`❌ train_sft.py does not compile: ${error?.message ?? String(error)}`);
+    }
+  }
+  if (existsSync(path.join(cwd, "eval.py"))) {
+    try {
+      await execFile("python3", ["-m", "py_compile", "eval.py"], { cwd, timeout: 20_000 });
+      checks.push("✅ eval.py compiles");
+    } catch (error: any) {
+      checks.push(`❌ eval.py does not compile: ${error?.message ?? String(error)}`);
+    }
+  }
+  const next = wizard ? wizardSteps(cwd, wizard).find((step) => !step.done)?.nextCommand : "/tinker new";
+  return [
+    "# Tinker doctor",
+    checks.map((c) => `- ${c}`).join("\n"),
+    "",
+    "## Next recommended command",
+    "```text",
+    next ?? "/tinker next",
+    "```",
+    "",
+    "If anything is confusing, run `/skill:tinker-debug` with this report.",
+  ].join("\n");
+}
+
 function makeExactEvalScript() {
   return `"""Simple editable eval for Tinker checkpoints.
 
@@ -1118,7 +1460,7 @@ export default async function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("tinker", {
-    description: "Tinker fine-tuning helper: setup, init, validate, smoke, monitor, checkpoints, use",
+    description: "Tinker fine-tuning helper: new, prepare, recommend, doctor, validate, eval, smoke, monitor, checkpoints, use",
     handler: async (args, ctx) => {
       const [subcommandRaw, ...rest] = shellSplit(args);
       const subcommand = subcommandRaw ?? "help";
@@ -1126,6 +1468,11 @@ export default async function (pi: ExtensionAPI) {
       if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
         sendReport("Tinker helper", [
           "Commands:",
+          "- `/tinker new [data.csv|data.jsonl|docs/] --goal ...` — golden path from data to first fine-tune.",
+          "- `/tinker prepare data.csv --out data/train.jsonl` — convert CSV/JSON/docs into chat JSONL.",
+          "- `/tinker recommend --goal ...` — pick starter model/settings and fastest path.",
+          "- `/tinker doctor [data/train.jsonl]` — diagnose local setup and project readiness.",
+          "- `/tinker examples list|copy customer-support` — concrete starter datasets/evals.",
           "- `/tinker start data/train.jsonl` — beginner step-by-step fine-tuning wizard.",
           "- `/tinker next` — show the next wizard step.",
           "- `/tinker reset` — reset wizard state for this project.",
@@ -1143,6 +1490,204 @@ export default async function (pi: ExtensionAPI) {
           "- `/skill:tinker-research ...` — load the Tinker research workflow.",
           "- `/skill:tinker-debug ...` — load Tinker debugging triage.",
         ].join("\n"));
+        return;
+      }
+
+
+      if (subcommand === "new" || subcommand === "finetune") {
+        const { positional, options } = parseOptions(rest);
+        const force = options.force === true;
+        let dataFileInput = positional[0] ? String(positional[0]) : "";
+        let metric = String(options.goal ?? options.metric ?? "");
+        let model = String(options.model ?? "");
+        const exampleSlug = options.example === true ? "customer-support" : options.example ? String(options.example) : "";
+
+        if (exampleSlug) {
+          try {
+            const result = await writeExampleTemplate(ctx.cwd, exampleSlug, force);
+            dataFileInput = path.join("examples", result.template.slug, "train.jsonl");
+            metric = metric || result.template.goal;
+          } catch (error) {
+            sendReport("Tinker new", error instanceof Error ? error.message : String(error), "error");
+            return;
+          }
+        }
+
+        if (ctx.hasUI && !dataFileInput) {
+          const choice = await ctx.ui.select("How do you want to start?", [
+            "use built-in customer-support example",
+            "use built-in structured-extraction example",
+            "use built-in concise-writing example",
+            "convert my CSV/JSON/docs",
+            "I already have chat JSONL",
+          ]);
+          if (choice?.startsWith("use built-in")) {
+            const slug = choice.includes("structured") ? "structured-extraction" : choice.includes("concise") ? "concise-writing" : "customer-support";
+            const result = await writeExampleTemplate(ctx.cwd, slug, force);
+            dataFileInput = path.join("examples", result.template.slug, "train.jsonl");
+            metric = metric || result.template.goal;
+          } else {
+            dataFileInput = (await ctx.ui.input("Path to CSV, JSON, JSONL, docs dir, or train.jsonl", "data/train.csv"))?.trim() ?? "";
+          }
+        }
+
+        if (!dataFileInput) {
+          sendReport("Tinker new", [
+            "Usage:",
+            "```text",
+            "/tinker new --example customer-support",
+            "/tinker new data/train.csv --goal \"better support answers\"",
+            "/tinker new data/train.jsonl --goal \"what should improve\"",
+            "```",
+          ].join("\n"), "warning");
+          return;
+        }
+
+        let dataFile = path.resolve(ctx.cwd, dataFileInput);
+        if (!existsSync(dataFile)) {
+          sendReport("Tinker new", `Input not found: ${dataFile}`, "error");
+          return;
+        }
+        if (!/\.jsonl$/i.test(dataFile) || options.prepare === true) {
+          const out = path.resolve(ctx.cwd, String(options.out ?? "data/train.jsonl"));
+          try {
+            const prepared = await prepareDataset(dataFile, out);
+            dataFile = prepared.outFile;
+            dataFileInput = rel(ctx.cwd, prepared.outFile);
+            sendReport("Dataset prepared", [
+              `Converted \`${rel(ctx.cwd, prepared.inputPath)}\` (${prepared.format}) to \`${rel(ctx.cwd, prepared.outFile)}\` with ${prepared.rows} rows.`,
+              prepared.warnings.length ? `\n## Warnings\n${prepared.warnings.map((w) => `- ${w}`).join("\n")}` : "",
+              `\n## Samples\n${prepared.samples.map((x, i) => `### ${i + 1}\n\`\`\`json\n${x}\n\`\`\``).join("\n\n")}`,
+            ].filter(Boolean).join("\n"), "success");
+          } catch (error) {
+            sendReport("Dataset prepare failed", error instanceof Error ? error.message : String(error), "error");
+            return;
+          }
+        }
+
+        if (ctx.hasUI && !model) {
+          const choice = await ctx.ui.select("Pick a starter model", [
+            "Qwen/Qwen3.5-9B-Base — best default for first SFT",
+            "Qwen/Qwen3.5-35B-A3B-Base — stronger MoE",
+            "meta-llama/Llama-3.2-1B — cheapest smoke tests",
+            "custom",
+          ]);
+          model = choice === "custom" ? ((await ctx.ui.input("Tinker model id", "Qwen/Qwen3.5-9B-Base"))?.trim() || "Qwen/Qwen3.5-9B-Base") : (choice?.split(" — ")[0] || "Qwen/Qwen3.5-9B-Base");
+        }
+        model = model || "Qwen/Qwen3.5-9B-Base";
+
+        if (ctx.hasUI && !metric) {
+          metric = (await ctx.ui.input("What should improve?", "e.g. support answer quality, extraction accuracy, concise writing"))?.trim() ?? "";
+        }
+        metric = metric || "Improve task quality on held-out examples.";
+
+        const state: WizardState = {
+          version: 1,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          dataFile,
+          dataFileInput,
+          model,
+          metric,
+          logPath: String(options.log ?? `logs/sft-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`),
+        };
+        await writeWizardState(ctx.cwd, state);
+        const written = await createWizardFiles(ctx.cwd, state, force);
+        const saved = await readWizardState(ctx.cwd) ?? state;
+        sendReport("Tinker golden path ready", [
+          written.length ? `Created ${written.map((x) => `\`${x}\``).join(", ")}.` : "Project files already existed; left them untouched.",
+          "",
+          recommendPlan(metric, readJsonl(dataFile).length),
+          "",
+          renderWizard(ctx.cwd, saved),
+        ].join("\n"), "success");
+        return;
+      }
+
+      if (subcommand === "prepare") {
+        const { positional, options } = parseOptions(rest);
+        const input = positional[0];
+        if (!input) {
+          sendReport("Tinker prepare", "Usage: `/tinker prepare data.csv --out data/train.jsonl`", "warning");
+          return;
+        }
+        const inputPath = path.resolve(ctx.cwd, input);
+        const outFile = path.resolve(ctx.cwd, String(options.out ?? "data/train.jsonl"));
+        if (!existsSync(inputPath)) {
+          sendReport("Tinker prepare", `Input not found: ${inputPath}`, "error");
+          return;
+        }
+        try {
+          const prepared = await prepareDataset(inputPath, outFile);
+          sendReport("Dataset prepared", [
+            `Converted \`${rel(ctx.cwd, inputPath)}\` (${prepared.format}) to \`${rel(ctx.cwd, outFile)}\`.`,
+            `- Rows: ${prepared.rows}`,
+            prepared.warnings.length ? `\n## Warnings\n${prepared.warnings.map((w) => `- ${w}`).join("\n")}` : "",
+            "\n## Next",
+            "```text",
+            `/tinker new ${rel(ctx.cwd, outFile)} --goal "what should improve"`,
+            `/tinker validate ${rel(ctx.cwd, outFile)} --quick`,
+            "```",
+          ].filter(Boolean).join("\n"), "success");
+        } catch (error) {
+          sendReport("Dataset prepare failed", error instanceof Error ? error.message : String(error), "error");
+        }
+        return;
+      }
+
+      if (subcommand === "recommend") {
+        const { positional, options } = parseOptions(rest);
+        const goal = String(options.goal ?? positional.join(" ") ?? "");
+        const data = options.data ? path.resolve(ctx.cwd, String(options.data)) : undefined;
+        let rows: number | undefined;
+        if (data && existsSync(data) && /\.jsonl$/i.test(data)) {
+          try { rows = readJsonl(data).length; } catch {}
+        }
+        sendReport("Tinker recommendation", recommendPlan(goal, rows), "info");
+        return;
+      }
+
+      if (subcommand === "examples") {
+        const { positional, options } = parseOptions(rest);
+        const action = positional[0] ?? "list";
+        if (action === "list") {
+          sendReport("Tinker examples", [
+            "Available starter examples:",
+            ...EXAMPLE_TEMPLATES.map((t) => `- \`${t.slug}\` — ${t.title}`),
+            "",
+            "Copy one into this project:",
+            "```text",
+            "/tinker examples copy customer-support",
+            "/tinker new --example customer-support",
+            "```",
+          ].join("\n"));
+          return;
+        }
+        if (action === "copy") {
+          const slug = positional[1] ?? "customer-support";
+          try {
+            const result = await writeExampleTemplate(ctx.cwd, slug, options.force === true);
+            sendReport("Tinker example copied", [
+              `Copied \`${result.template.title}\`.`,
+              result.files.length ? `Wrote ${result.files.map((f) => `\`${f}\``).join(", ")}.` : "Files already existed; left them untouched.",
+              "",
+              "Start from it:",
+              "```text",
+              `/tinker new examples/${result.template.slug}/train.jsonl --goal "${result.template.goal}"`,
+              "```",
+            ].join("\n"), "success");
+          } catch (error) {
+            sendReport("Tinker examples", error instanceof Error ? error.message : String(error), "error");
+          }
+          return;
+        }
+        sendReport("Tinker examples", "Usage: `/tinker examples list` or `/tinker examples copy customer-support`", "warning");
+        return;
+      }
+
+      if (subcommand === "doctor") {
+        const { positional } = parseOptions(rest);
+        sendReport("Tinker doctor", await buildDoctorReport(ctx.cwd, positional[0]), "info");
         return;
       }
 
