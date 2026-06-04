@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+Managed improvement and deployment:
+
+- Added `/tinker improve` as a managed fine-tuning operator with `demo`, `smoke`, `small`, and `real` budgets.
+- The improve operator prepares data, scaffolds project files, runs doctor/validation, runs baseline evals, smoke tests, scaled training, checkpoint evals, before/after comparisons, checkpoint registration, and data-improvement suggestions.
+- Added `/tinker deploy` to generate `.env.example`, Python client, Node client, FastAPI wrapper, and README for a Tinker sampler checkpoint.
+- Updated README, command docs, agent guidance, and local integration tests for the managed workflow.
+
 ## 0.6.2
 
 Launch polish:

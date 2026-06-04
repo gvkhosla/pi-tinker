@@ -62,6 +62,11 @@ async function main() {
     assert(existsSync(path.join(tmp, "data", "train.jsonl")), "/tinker new did not prepare data/train.jsonl");
     assert(existsSync(path.join(tmp, "train_sft.py")), "/tinker new did not create train_sft.py");
     pi(["-p", "/tinker doctor data/train.jsonl"], { cwd: tmp });
+    pi(["-p", "/tinker improve support.csv --goal support-quality --budget demo --force"], { cwd: tmp });
+    assert(existsSync(path.join(tmp, ".tinker-pi", "state.json")), "/tinker improve demo did not create wizard state");
+    pi(["-p", "/tinker deploy tinker://pi-tinker-test/sampler_weights/000003 pi-tinker-deploy --force"], { cwd: tmp });
+    assert(existsSync(path.join(tmp, "deploy", "pi-tinker-deploy", "python_client.py")), "/tinker deploy did not create python_client.py");
+    assert(readFileSync(path.join(tmp, "deploy", "pi-tinker-deploy", ".env.example"), "utf8").includes("tinker://pi-tinker-test/sampler_weights/000003"), "/tinker deploy env missing checkpoint");
 
     // Beginner wizard should create state, scaffold files, show next step, and reset cleanly.
     pi(["-p", "/tinker start train.jsonl --metric quality --force"], { cwd: tmp });

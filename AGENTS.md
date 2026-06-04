@@ -22,7 +22,21 @@ If the user has no data yet:
 /tinker doctor
 ```
 
-If the user has CSV/JSON/JSONL/docs:
+If the user has CSV/JSON/JSONL/docs, prefer the managed operator first:
+
+```text
+/tinker improve <input> --goal "what should improve" --budget demo
+```
+
+Then, only after the user understands API usage and evals:
+
+```text
+/tinker improve <input> --goal "what should improve" --budget smoke --yes
+/tinker improve <input> --goal "what should improve" --budget small --yes
+/tinker deploy latest
+```
+
+Manual path:
 
 ```text
 /tinker new <input> --goal "what should improve"
@@ -49,6 +63,8 @@ If the user is stuck:
 ## What is possible
 
 - Start from a zero-data demo: `/tinker demo`.
+- Run a managed improve loop with `/tinker improve`.
+- Generate app/client snippets with `/tinker deploy`.
 - Convert CSV, JSON, JSONL prompt/response rows, TXT/MD files, or docs directories to chat JSONL.
 - Scaffold editable Tinker Cookbook SFT scripts.
 - Validate JSONL shape and, when dependencies are installed, renderer/token masks.

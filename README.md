@@ -2,7 +2,7 @@
 
 Fine-tune an open-source model with [Tinker](https://thinkingmachines.ai/tinker/) from inside [Pi](https://pi.dev) without learning the whole post-training stack first.
 
-`pi-tinker` is intentionally **not** another training framework. It is a beginner-friendly golden path around Tinker/Tinker Cookbook: bring CSV/JSON/JSONL/docs, convert and validate data, create editable Python, run baseline evals, smoke-test training, monitor checkpoints, compare before/after quality, and chat with the trained checkpoint in Pi.
+`pi-tinker` is intentionally **not** another training framework. It is a beginner-friendly operator around Tinker/Tinker Cookbook: bring CSV/JSON/JSONL/docs, convert and validate data, create editable Python, run baseline evals, smoke-test training, monitor checkpoints, compare before/after quality, generate app snippets, and chat with the trained checkpoint in Pi.
 
 ## Who this is for
 
@@ -33,7 +33,21 @@ My order is late,Sorry — send us your order number and we’ll check it.
 The app crashes after login,Update the app and restart. If it still crashes, send your device type and app version.
 ```
 
-Then run:
+Then run the managed operator:
+
+```text
+/tinker improve data.csv --goal "better customer support answers" --budget demo
+```
+
+When the demo/no-API setup looks good, move through safer budgets:
+
+```text
+/tinker improve data.csv --goal "better customer support answers" --budget smoke --yes
+/tinker improve data.csv --goal "better customer support answers" --budget small --yes
+/tinker deploy latest
+```
+
+Or drive the steps manually:
 
 ```text
 /tinker new data.csv --goal "better customer support answers"
@@ -44,7 +58,7 @@ Then run:
 /tinker next
 ```
 
-The extension keeps showing the next safe step: validate → baseline eval → 2-step smoke test → train → compare → chat with checkpoint.
+The extension keeps showing the next safe step: validate → baseline eval → 2-step smoke test → train → compare → deploy/use checkpoint.
 
 If you try it and get stuck, please open an issue with the command you ran and the `/tinker doctor` output.
 
@@ -78,6 +92,8 @@ Use pi-tinker to help me fine-tune a model on this CSV. Start with /tinker docto
 ### 2. Adds a `/tinker` command
 
 ```text
+/tinker improve data.csv --goal "better support answers" --budget demo
+/tinker deploy latest
 /tinker demo
 /tinker new data.csv --goal "better support answers"
 /tinker new --example customer-support
@@ -103,24 +119,39 @@ Use pi-tinker to help me fine-tune a model on this CSV. Start with /tinker docto
 /tinker use --remove <alias-or-tinker-path>
 ```
 
-### 3. Adds a real golden path for beginners
+### 3. Adds a managed improvement operator
 
-`/tinker new` is the fastest entrypoint. It can start from an existing chat JSONL file, convert CSV/JSON/docs into chat JSONL, or copy a built-in example. It scaffolds the project, recommends starter settings, creates wizard state, and shows the next command.
+`/tinker improve` is the highest-level workflow. It can prepare data, scaffold files, run doctor/validation, ensure evals exist, run baseline evals, run 2-step smoke tests, scale to a short/real run with confirmation, evaluate checkpoints, compare wins/regressions, register the checkpoint in Pi, and suggest what data to add next.
+
+Budgets:
+
+- `demo` — no API usage; setup + doctor + lightweight validation.
+- `smoke` — baseline eval + 2-step smoke train, then stop.
+- `small` — short training run after smoke.
+- `real` — larger run, still confirmation-first.
+
+### 4. Adds app/deploy snippets
+
+`/tinker deploy <checkpoint-or-alias>` generates a deploy folder with `.env.example`, Python client, Node client, FastAPI wrapper, and README for using a Tinker sampler checkpoint through the OpenAI-compatible endpoint.
+
+### 5. Adds a real golden path for beginners
+
+`/tinker new` starts from an existing chat JSONL file, converts CSV/JSON/docs into chat JSONL, or copies a built-in example. It scaffolds the project, recommends starter settings, creates wizard state, and shows the next command.
 
 `/tinker start` remains the step-by-step wizard for people who already have training JSONL. It tracks progress in `.tinker-pi/state.json` and always shows the next recommended action: environment, data, validation, baseline eval, smoke test, training, checkpoint eval, comparison, and chatting with the checkpoint.
 
-### 4. Adds data preparation, recommendations, doctor, and examples
+### 6. Adds data preparation, recommendations, doctor, and examples
 
 - `/tinker prepare` converts CSV, JSON, JSONL prompt/response rows, TXT/MD files, or docs directories into Tinker chat JSONL.
 - `/tinker recommend` picks a starter model/method/settings from the user's goal.
 - `/tinker doctor` checks API key, Python, Tinker imports, generated scripts, selected data, and next step.
 - `/tinker examples` provides concrete starter tasks: customer support, structured extraction, and concise writing.
 
-### 5. Adds eval-first before training
+### 7. Adds eval-first before training
 
 `/tinker eval init` creates an editable `eval.py` and `data/eval.jsonl`. Users can run a baseline eval before training, evaluate a checkpoint after training, and compare wins/regressions.
 
-### 6. Scaffolds editable SFT projects
+### 8. Scaffolds editable SFT projects
 
 `/tinker init ...` or `/tinker sft ...` writes:
 
@@ -131,7 +162,7 @@ tinker.yaml           # human-readable run summary
 notes/plan.md         # experiment plan template
 ```
 
-### 7. Registers trained checkpoints as Pi models
+### 9. Registers trained checkpoints as Pi models
 
 `/tinker use tinker://.../sampler_weights/... my-model` registers a checkpoint through Tinker's beta OpenAI-compatible inference endpoint. You can then select it with `/model` and quickly poke at the fine-tuned model inside Pi.
 

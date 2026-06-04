@@ -1,5 +1,80 @@
 # `/tinker` command reference
 
+## `/tinker improve [input] [options]`
+
+Managed fine-tuning operator. This is the highest-level command for people who want Pi to run the safe loop instead of remembering every step.
+
+```text
+/tinker improve data.csv --goal "better support answers" --budget demo
+/tinker improve data.csv --goal "better support answers" --budget smoke --yes
+/tinker improve data.csv --goal "better support answers" --budget small --yes
+```
+
+What it does:
+
+1. prepare/locate data,
+2. scaffold editable Tinker Cookbook files,
+3. run `/tinker doctor` checks,
+4. validate data lightly and show next validation command,
+5. ensure eval files exist,
+6. run baseline eval before training,
+7. run 2-step smoke training,
+8. scale training only with confirmation / `--yes`,
+9. evaluate checkpoint on the same eval,
+10. compare wins/regressions,
+11. register the checkpoint for chat in Pi,
+12. suggest what data to add next from eval failures.
+
+Budgets:
+
+| Budget | API usage | Meaning |
+|---|---:|---|
+| `demo` | no | Setup, project files, doctor, lightweight validation. Stops before API calls. |
+| `smoke` | yes | Baseline eval + 2-step smoke training. |
+| `small` | yes | Smoke, then short training run, checkpoint eval, comparison, registration. |
+| `real` | yes | Larger managed run. Still confirmation-first unless `--yes`. |
+
+Options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--goal` / `--metric` | TODO | What should improve |
+| `--budget` | `demo` | `demo`, `smoke`, `small`, or `real` |
+| `--model` | `Qwen/Qwen3.5-9B-Base` | Base model / renderer model |
+| `--steps` | budget default | Override scale-up max steps |
+| `--yes` | false | Confirm API-using stages |
+| `--force` | false | Overwrite generated files / rerun baseline |
+| `--alias` | generated | Alias for registered checkpoint |
+| `--register` | true | Register checkpoint for chat if one is found |
+
+## `/tinker deploy <checkpoint-or-alias> [alias] [options]`
+
+Generates app/client snippets for using a trained Tinker sampler checkpoint through the OpenAI-compatible endpoint.
+
+```text
+/tinker deploy latest
+/tinker deploy my-sft
+/tinker deploy tinker://.../sampler_weights/... support-sft
+```
+
+Writes by default:
+
+```text
+deploy/<alias>/README.md
+deploy/<alias>/.env.example
+deploy/<alias>/python_client.py
+deploy/<alias>/node_client.mjs
+deploy/<alias>/fastapi_app.py
+```
+
+Options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--out` | `deploy/<alias>` | Output directory |
+| `--alias` | positional/generated | Friendly name |
+| `--force` | false | Overwrite existing files |
+
 ## `/tinker demo`
 
 Zero-data demo. Copies the built-in `customer-support` example, creates a guided project, writes editable training/eval files, and shows the next step.
