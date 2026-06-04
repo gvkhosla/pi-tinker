@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+Beginner wizard:
+
+- Added `/tinker start` as the step-by-step fine-tuning flow for non-experts.
+- Added `/tinker next` to show current progress and the next recommended action.
+- Added `/tinker reset` to clear wizard state for a project.
+- Wizard state is stored in `.tinker-pi/state.json` and tracks data, model, metric, validation, eval, smoke test, checkpoint, comparison, and chat registration progress.
+- Local integration tests now cover wizard start/next/reset.
+
 ## 0.4.0
 
 Eval-first workflow:

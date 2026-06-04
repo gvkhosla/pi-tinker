@@ -14,6 +14,9 @@ A thin [Pi](https://pi.dev) package that makes it easier to use [Tinker](https:/
 ### 2. Adds a `/tinker` command
 
 ```text
+/tinker start data/train.jsonl
+/tinker next
+/tinker reset
 /tinker setup
 /tinker init data/train.jsonl
 /tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
@@ -29,11 +32,15 @@ A thin [Pi](https://pi.dev) package that makes it easier to use [Tinker](https:/
 /tinker use --remove <alias-or-tinker-path>
 ```
 
-### 3. Adds eval-first before training
+### 3. Adds a beginner step-by-step wizard
+
+`/tinker start` creates a guided flow for people who have never fine-tuned before. It tracks progress in `.tinker-pi/state.json` and always shows the next recommended action: environment, data, validation, baseline eval, smoke test, training, checkpoint eval, comparison, and chatting with the checkpoint.
+
+### 4. Adds eval-first before training
 
 `/tinker eval init` creates an editable `eval.py` and `data/eval.jsonl`. Users can run a baseline eval before training, evaluate a checkpoint after training, and compare wins/regressions.
 
-### 4. Scaffolds editable SFT projects
+### 5. Scaffolds editable SFT projects
 
 `/tinker init ...` or `/tinker sft ...` writes:
 
@@ -44,7 +51,7 @@ tinker.yaml           # human-readable run summary
 notes/plan.md         # experiment plan template
 ```
 
-### 5. Registers trained checkpoints as Pi models
+### 6. Registers trained checkpoints as Pi models
 
 `/tinker use tinker://.../sampler_weights/... my-model` registers a checkpoint through Tinker's beta OpenAI-compatible inference endpoint. You can then select it with `/model` and quickly poke at the fine-tuned model inside Pi.
 
@@ -93,6 +100,8 @@ python3 -m pip install tinker-cookbook
 Inside a project with chat SFT data:
 
 ```text
+/tinker start data/train.jsonl
+/tinker next
 /tinker setup
 /tinker init data/train.jsonl
 /tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base

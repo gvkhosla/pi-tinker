@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { execFile as execFileCb } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -850,6 +850,221 @@ function compareEvalSummaries(baselinePath: string, candidatePath: string): stri
   ].join("\n");
 }
 
+type WizardState = {
+  version: 1;
+  createdAt: number;
+  updatedAt: number;
+  dataFile?: string;
+  dataFileInput?: string;
+  model?: string;
+  metric?: string;
+  logPath?: string;
+  validationAt?: number;
+  baselineResult?: string;
+  smokeAt?: number;
+  smokeLogDir?: string;
+  checkpointPath?: string;
+  candidateResult?: string;
+  registeredModel?: string;
+};
+
+function wizardDir(cwd: string) {
+  return path.join(cwd, ".tinker-pi");
+}
+
+function wizardStatePath(cwd: string) {
+  return path.join(wizardDir(cwd), "state.json");
+}
+
+async function readWizardState(cwd: string): Promise<WizardState | undefined> {
+  try {
+    return JSON.parse(await readFile(wizardStatePath(cwd), "utf8")) as WizardState;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeWizardState(cwd: string, state: WizardState): Promise<void> {
+  await mkdir(wizardDir(cwd), { recursive: true });
+  await writeFile(wizardStatePath(cwd), JSON.stringify({ ...state, updatedAt: Date.now() }, null, 2) + "\n");
+}
+
+async function patchWizardState(cwd: string, patch: Partial<WizardState>): Promise<void> {
+  const existing = await readWizardState(cwd);
+  if (!existing) return;
+  await writeWizardState(cwd, { ...existing, ...patch, version: 1 });
+}
+
+function rel(cwd: string, filePath?: string) {
+  if (!filePath) return "";
+  const r = path.relative(cwd, filePath);
+  return r && !r.startsWith("..") ? r : filePath;
+}
+
+type WizardStep = {
+  key: string;
+  label: string;
+  done: boolean;
+  detail: string;
+  nextCommand?: string;
+  apiUsage?: boolean;
+};
+
+function findLatestCandidateEval(cwd: string): string | undefined {
+  const dir = path.join(cwd, "eval_results");
+  if (!existsSync(dir)) return undefined;
+  try {
+    const candidates = readdirSync(dir)
+      .filter((name) => name.endsWith(".json") && name !== "baseline.json")
+      .map((name) => path.join(dir, name))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    return candidates[0];
+  } catch {
+    return undefined;
+  }
+}
+
+function firstSamplerCheckpoint(logDir?: string): string | undefined {
+  if (!logDir || !existsSync(path.join(logDir, "checkpoints.jsonl"))) return undefined;
+  try {
+    return readCheckpoints(logDir).filter((c) => c.sampler_path).slice(-1)[0]?.sampler_path;
+  } catch {
+    return undefined;
+  }
+}
+
+function wizardSteps(cwd: string, state: WizardState): WizardStep[] {
+  const dataFile = state.dataFile;
+  const logDir = state.logPath ? path.resolve(cwd, state.logPath) : undefined;
+  const baseline = state.baselineResult ?? (existsSync(path.join(cwd, "eval_results", "baseline.json")) ? path.join(cwd, "eval_results", "baseline.json") : undefined);
+  const checkpoint = state.checkpointPath ?? firstSamplerCheckpoint(logDir);
+  const candidate = state.candidateResult ?? findLatestCandidateEval(cwd);
+  const registered = state.registeredModel || (checkpoint ? undefined : state.registeredModel);
+
+  return [
+    {
+      key: "env",
+      label: "Environment ready",
+      done: Boolean(process.env.TINKER_API_KEY) && existsSync(process.execPath),
+      detail: process.env.TINKER_API_KEY ? "TINKER_API_KEY is set" : "Set TINKER_API_KEY first",
+      nextCommand: "/tinker setup",
+    },
+    {
+      key: "data",
+      label: "Training data selected",
+      done: Boolean(dataFile && existsSync(dataFile)),
+      detail: dataFile ? rel(cwd, dataFile) : "No JSONL selected",
+      nextCommand: "/tinker start path/to/train.jsonl",
+    },
+    {
+      key: "files",
+      label: "Project files created",
+      done: existsSync(path.join(cwd, "train_sft.py")) && existsSync(path.join(cwd, "eval.py")) && existsSync(path.join(cwd, "data", "eval.jsonl")),
+      detail: "train_sft.py, eval.py, data/eval.jsonl",
+      nextCommand: "/tinker next --create-files",
+    },
+    {
+      key: "validate",
+      label: "Data validated",
+      done: Boolean(state.validationAt),
+      detail: state.validationAt ? new Date(state.validationAt).toLocaleString() : "Need readiness report",
+      nextCommand: dataFile ? `/tinker validate ${rel(cwd, dataFile)} --model ${state.model ?? "Qwen/Qwen3.5-9B-Base"}` : undefined,
+    },
+    {
+      key: "baseline",
+      label: "Baseline eval run",
+      done: Boolean(baseline && existsSync(baseline)),
+      detail: baseline ? rel(cwd, baseline) : "Measure base model before training",
+      nextCommand: `/tinker eval baseline --model ${state.model ?? "Qwen/Qwen3.5-9B-Base"} --yes`,
+      apiUsage: true,
+    },
+    {
+      key: "smoke",
+      label: "2-step smoke test run",
+      done: Boolean(state.smokeAt) || Boolean(logDir && existsSync(path.join(logDir, "metrics.jsonl"))),
+      detail: state.smokeAt ? new Date(state.smokeAt).toLocaleString() : "Run tiny training test",
+      nextCommand: "/tinker smoke train_sft.py --yes",
+      apiUsage: true,
+    },
+    {
+      key: "train",
+      label: "Training/checkpoint available",
+      done: Boolean(checkpoint),
+      detail: checkpoint ? checkpoint : "Run more steps, then save/check checkpoints",
+      nextCommand: state.logPath ? `/tinker monitor ${state.logPath}` : "python train_sft.py max_steps=100",
+      apiUsage: true,
+    },
+    {
+      key: "checkpoint-eval",
+      label: "Checkpoint eval run",
+      done: Boolean(candidate && existsSync(candidate)),
+      detail: candidate ? rel(cwd, candidate) : "Evaluate trained checkpoint on same eval set",
+      nextCommand: checkpoint ? `/tinker eval checkpoint ${checkpoint} --model ${state.model ?? "Qwen/Qwen3.5-9B-Base"} --yes` : undefined,
+      apiUsage: true,
+    },
+    {
+      key: "compare",
+      label: "Before/after compared",
+      done: Boolean(baseline && candidate && existsSync(baseline) && existsSync(candidate)),
+      detail: baseline && candidate ? `${rel(cwd, baseline)} vs ${rel(cwd, candidate)}` : "Compare baseline and checkpoint evals",
+      nextCommand: baseline && candidate ? `/tinker eval compare ${rel(cwd, baseline)} ${rel(cwd, candidate)}` : undefined,
+    },
+    {
+      key: "chat",
+      label: "Checkpoint registered for chat",
+      done: Boolean(registered),
+      detail: registered ? registered : "Select checkpoint as a Pi model",
+      nextCommand: checkpoint ? `/tinker use ${checkpoint} my-finetune` : undefined,
+    },
+  ];
+}
+
+function renderWizard(cwd: string, state: WizardState): string {
+  const steps = wizardSteps(cwd, state);
+  const next = steps.find((step) => !step.done);
+  const progress = `${steps.filter((s) => s.done).length}/${steps.length}`;
+  return [
+    `# Fine-tune wizard`,
+    `- Progress: ${progress}`,
+    `- Model: \`${state.model ?? "Qwen/Qwen3.5-9B-Base"}\``,
+    state.dataFile ? `- Training data: \`${rel(cwd, state.dataFile)}\`` : "- Training data: not selected",
+    state.metric ? `- Success metric: ${state.metric}` : "- Success metric: not defined",
+    "",
+    ...steps.map((step) => `${step.done ? "✅" : "⬜"} **${step.label}** — ${step.detail}`),
+    "",
+    next
+      ? `## Next step\n${next.apiUsage ? "⚠️ This step may use the Tinker API.\n\n" : ""}Run:\n\n\`\`\`text\n${next.nextCommand ?? "/tinker next"}\n\`\`\``
+      : "## Complete\nYou have a validated dataset, before/after evals, and a checkpoint ready to chat with in Pi.",
+    "",
+    "Use `/tinker next` any time to see the next recommended action, or `/tinker reset` to start over.",
+  ].join("\n");
+}
+
+async function createWizardFiles(cwd: string, state: WizardState, force = false): Promise<string[]> {
+  if (!state.dataFile) throw new Error("Wizard has no dataFile. Run `/tinker start data/train.jsonl` first.");
+  const model = state.model ?? "Qwen/Qwen3.5-9B-Base";
+  const logPath = state.logPath ?? `logs/sft-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
+  const files = [
+    { rel: "README.md", content: makeProjectReadme({ model, dataFile: state.dataFile, logPath, successMetric: state.metric ?? "Define before scaling." }) },
+    { rel: "train_sft.py", content: makeSftScript({ dataFile: state.dataFile, model, logPath, maxSteps: "20", batchSize: "8", learningRate: "2e-4", testSize: "0", maxLength: "32768" }) },
+    { rel: "eval_checkpoint.py", content: makeEvalScript() },
+    { rel: "eval.py", content: makeExactEvalScript() },
+    { rel: path.join("data", "eval.jsonl"), content: makeExampleEvalJsonl() },
+    { rel: "tinker.yaml", content: `task: sft\ndata: ${state.dataFile}\nmodel: ${model}\nlog_path: ${logPath}\nmax_steps: 20\nbatch_size: 8\nlearning_rate: 2e-4\nsuccess_metric: ${state.metric ?? ""}\n` },
+    { rel: path.join("notes", "plan.md"), content: `# Fine-tuning plan\n\n## Goal\n\n${state.metric ?? "Define what should improve."}\n\n## Wizard\n\nRun \`/tinker next\` for the next step.\n` },
+  ];
+  const written: string[] = [];
+  for (const file of files) {
+    const target = path.join(cwd, file.rel);
+    if (existsSync(target) && !force) continue;
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, file.content);
+    written.push(file.rel);
+  }
+  await writeWizardState(cwd, { ...state, logPath, version: 1 });
+  return written;
+}
+
 export default async function (pi: ExtensionAPI) {
   let state = await loadState();
   let monitorInterval: ReturnType<typeof setInterval> | undefined;
@@ -911,8 +1126,11 @@ export default async function (pi: ExtensionAPI) {
       if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
         sendReport("Tinker helper", [
           "Commands:",
+          "- `/tinker start data/train.jsonl` — beginner step-by-step fine-tuning wizard.",
+          "- `/tinker next` — show the next wizard step.",
+          "- `/tinker reset` — reset wizard state for this project.",
           "- `/tinker setup` — check API key, Python, uv/pip, Tinker SDK.",
-          "- `/tinker init` — guided SFT project wizard (or `/tinker init data/train.jsonl`).",
+          "- `/tinker init` — guided SFT project scaffold (or `/tinker init data/train.jsonl`).",
           "- `/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base` — JSONL + renderer/token-mask validation.",
           "- `/tinker eval init|baseline|checkpoint|compare` — create and run simple evals before/after training.",
           "- `/tinker sft data/train.jsonl --model Qwen/Qwen3.5-9B-Base --steps 20` — scaffold editable SFT files.",
@@ -925,6 +1143,93 @@ export default async function (pi: ExtensionAPI) {
           "- `/skill:tinker-research ...` — load the Tinker research workflow.",
           "- `/skill:tinker-debug ...` — load Tinker debugging triage.",
         ].join("\n"));
+        return;
+      }
+
+      if (subcommand === "start") {
+        const { positional, options } = parseOptions(rest);
+        let dataFileInput = positional[0] ? String(positional[0]) : "";
+        let model = String(options.model ?? "");
+        let metric = String(options.metric ?? "");
+        const force = options.force === true;
+
+        if (ctx.hasUI && !dataFileInput) {
+          dataFileInput = (await ctx.ui.input("Where is your training JSONL?", "data/train.jsonl"))?.trim() ?? "";
+        }
+        if (!dataFileInput) {
+          sendReport("Fine-tune wizard", "Usage: `/tinker start data/train.jsonl --model Qwen/Qwen3.5-9B-Base --metric 'what should improve'`", "warning");
+          return;
+        }
+        const dataFile = path.resolve(ctx.cwd, dataFileInput);
+        if (!existsSync(dataFile)) {
+          sendReport("Fine-tune wizard", `Data file not found: ${dataFile}`, "error");
+          return;
+        }
+
+        if (ctx.hasUI && !model) {
+          const choice = await ctx.ui.select("Pick a starter model", [
+            "Qwen/Qwen3.5-9B-Base — good small default",
+            "Qwen/Qwen3.5-35B-A3B-Base — stronger MoE",
+            "meta-llama/Llama-3.2-1B — cheapest smoke tests",
+            "custom",
+          ]);
+          model = choice === "custom" ? ((await ctx.ui.input("Tinker model id", "Qwen/Qwen3.5-9B-Base"))?.trim() || "Qwen/Qwen3.5-9B-Base") : (choice?.split(" — ")[0] || "Qwen/Qwen3.5-9B-Base");
+        }
+        model = model || "Qwen/Qwen3.5-9B-Base";
+
+        if (ctx.hasUI && !metric) {
+          metric = (await ctx.ui.input("What should the model get better at?", "e.g. support answers, concise rewrites, JSON extraction accuracy"))?.trim() ?? "";
+        }
+        metric = metric || "Define success before scaling beyond a smoke test.";
+
+        const state: WizardState = {
+          version: 1,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          dataFile,
+          dataFileInput,
+          model,
+          metric,
+          logPath: String(options.log ?? `logs/sft-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`),
+        };
+        await writeWizardState(ctx.cwd, state);
+        const written = await createWizardFiles(ctx.cwd, state, force);
+        const saved = await readWizardState(ctx.cwd) ?? state;
+        sendReport("Fine-tune wizard started", [
+          written.length ? `Created ${written.map((x) => `\`${x}\``).join(", ")}.` : "Project files already existed; left them untouched.",
+          "",
+          renderWizard(ctx.cwd, saved),
+        ].join("\n"), "success");
+        return;
+      }
+
+      if (subcommand === "next") {
+        const { options } = parseOptions(rest);
+        const state = await readWizardState(ctx.cwd);
+        if (!state) {
+          sendReport("Fine-tune wizard", "No wizard state found. Start with `/tinker start data/train.jsonl`.", "warning");
+          return;
+        }
+        const steps = wizardSteps(ctx.cwd, state);
+        const next = steps.find((step) => !step.done);
+        if ((options["create-files"] === true || next?.key === "files") && state.dataFile) {
+          const written = await createWizardFiles(ctx.cwd, state, options.force === true);
+          const saved = await readWizardState(ctx.cwd) ?? state;
+          sendReport("Fine-tune wizard files", [
+            written.length ? `Created ${written.map((x) => `\`${x}\``).join(", ")}.` : "All project files already exist.",
+            "",
+            renderWizard(ctx.cwd, saved),
+          ].join("\n"), "success");
+          return;
+        }
+        sendReport("Fine-tune wizard", renderWizard(ctx.cwd, state), next?.apiUsage ? "warning" : "info");
+        return;
+      }
+
+      if (subcommand === "reset") {
+        await rm(wizardDir(ctx.cwd), { recursive: true, force: true });
+        ctx.ui.setWidget("tinker-monitor", undefined);
+        sendReport("Fine-tune wizard", "Reset `.tinker-pi/`. Run `/tinker start data/train.jsonl` to begin again.", "success");
         return;
       }
 
@@ -968,6 +1273,7 @@ export default async function (pi: ExtensionAPI) {
         }
         try {
           const python = await validateDatasetWithPython(dataFile, model, maxExamples, maxLength);
+          await patchWizardState(ctx.cwd, { validationAt: Date.now(), dataFile, dataFileInput: file, model });
           sendReport("Tinker dataset validation", `${python}\n\n---\n\n${lightweight}`, "info");
         } catch (error) {
           sendReport("Tinker dataset validation", `${lightweight}\n\n## Python-backed validation failed\n${error instanceof Error ? error.message : String(error)}`, "warning");
@@ -1057,6 +1363,7 @@ export default async function (pi: ExtensionAPI) {
               timeout: Number(options.timeout ?? 1_800_000),
               maxBuffer: 12 * 1024 * 1024,
             });
+            await patchWizardState(ctx.cwd, action === "baseline" ? { baselineResult: out, model } : { candidateResult: out, checkpointPath: String(checkpoint), model });
             sendReport("Tinker eval completed", [
               formatEvalSummary(out),
               `\n## Output tail\n\`\`\`text\n${`${stdout}\n${stderr}`.trim().split(/\n/).slice(-60).join("\n")}\n\`\`\``,
@@ -1242,6 +1549,7 @@ export default async function (pi: ExtensionAPI) {
           const logMatch = combined.match(/log_path='([^']+)'|log_path=([^,\s)]+)/);
           const logDir = logMatch ? path.resolve(ctx.cwd, (logMatch[1] ?? logMatch[2] ?? "").replace(/^['\"]|['\"]$/g, "")) : undefined;
           const metrics = logDir ? latestMetrics(path.join(logDir, "metrics.jsonl")) : undefined;
+          await patchWizardState(ctx.cwd, { smokeAt: Date.now(), smokeLogDir: logDir, logPath: logDir ? rel(ctx.cwd, logDir) : undefined });
           sendReport("Tinker smoke test passed", [
             "The 2-step command completed.",
             metrics ? `\n## Latest metrics\n${metrics}` : "",
@@ -1307,6 +1615,8 @@ export default async function (pi: ExtensionAPI) {
         }
         const lines = checkpoints.map((c, i) => `${i + 1}. ${c.name ?? "checkpoint"}${c.final ? " (final)" : ""}${c.batch !== undefined ? ` batch=${c.batch}` : ""}\n   sampler: ${c.sampler_path ?? "none"}\n   state: ${c.state_path ?? "none"}`);
         const samplerCheckpoints = checkpoints.filter((c) => c.sampler_path);
+        const latestSampler = samplerCheckpoints.slice(-1)[0]?.sampler_path;
+        if (latestSampler) await patchWizardState(ctx.cwd, { checkpointPath: latestSampler, logPath: rel(ctx.cwd, logDir) });
         if (ctx.hasUI && samplerCheckpoints.length > 0) {
           const choice = await ctx.ui.select("Register sampler checkpoint as Pi model?", ["just list", ...samplerCheckpoints.map((c) => `${c.name ?? "checkpoint"} — ${c.sampler_path}`)]);
           if (choice && choice !== "just list") {
@@ -1316,6 +1626,7 @@ export default async function (pi: ExtensionAPI) {
               state.checkpoints = state.checkpoints.filter((m) => m.id !== record.sampler_path && m.name !== alias);
               state.checkpoints.push({ id: record.sampler_path, name: alias, contextWindow: 32768, maxTokens: 4096, addedAt: Date.now() });
               await saveState(state);
+              await patchWizardState(ctx.cwd, { checkpointPath: record.sampler_path, registeredModel: alias });
               registerTinkerProvider();
               sendReport("Tinker checkpoint registered", `Registered \`${alias}\` for \`${record.sampler_path}\`. Use \`/model\` to select it.`, "success");
               return;
@@ -1376,6 +1687,7 @@ export default async function (pi: ExtensionAPI) {
         state.checkpoints = state.checkpoints.filter((m) => m.id !== checkpoint && m.name !== alias);
         state.checkpoints.push({ id: checkpoint, name: alias, contextWindow, maxTokens, addedAt: Date.now() });
         await saveState(state);
+        await patchWizardState(ctx.cwd, { checkpointPath: checkpoint, registeredModel: alias });
         registerTinkerProvider();
         sendReport("Tinker checkpoint registered", [
           `Registered \`${alias}\` as provider/model \`tinker/${checkpoint}\`.`,

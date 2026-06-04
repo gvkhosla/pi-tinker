@@ -48,6 +48,13 @@ async function main() {
     pi(["-p", "/tinker validate train.jsonl --quick"], { cwd: tmp });
     pi(["-p", "/tinker validate train.jsonl --model Qwen/Qwen3.5-9B-Base --examples 1"], { cwd: tmp });
 
+    // Beginner wizard should create state, scaffold files, show next step, and reset cleanly.
+    pi(["-p", "/tinker start train.jsonl --metric quality --force"], { cwd: tmp });
+    assert(existsSync(path.join(tmp, ".tinker-pi", "state.json")), "/tinker start did not create wizard state");
+    pi(["-p", "/tinker next"], { cwd: tmp });
+    pi(["-p", "/tinker reset"], { cwd: tmp });
+    assert(!existsSync(path.join(tmp, ".tinker-pi", "state.json")), "/tinker reset did not remove wizard state");
+
     // Eval scaffolding should create editable eval files.
     pi(["-p", "/tinker eval init --force"], { cwd: tmp });
     assert(existsSync(path.join(tmp, "eval.py")), "/tinker eval init did not create eval.py");

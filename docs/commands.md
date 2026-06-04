@@ -1,5 +1,43 @@
 # `/tinker` command reference
 
+## `/tinker start [jsonl] [options]`
+
+Beginner step-by-step fine-tuning wizard. This is the simplest entrypoint for people who have examples and want to improve an open model without knowing the Tinker internals.
+
+```text
+/tinker start data/train.jsonl --model Qwen/Qwen3.5-9B-Base --metric "support answer quality"
+```
+
+It creates project files, stores progress in `.tinker-pi/state.json`, and guides the user through:
+
+1. environment setup,
+2. data selection,
+3. file creation,
+4. validation,
+5. baseline eval,
+6. smoke test,
+7. training/checkpoint discovery,
+8. checkpoint eval,
+9. before/after comparison,
+10. registering the checkpoint for chat in Pi.
+
+Options:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `--model` | prompt / `Qwen/Qwen3.5-9B-Base` | Starter model |
+| `--metric` | prompt | What should improve |
+| `--log` | `logs/sft-<timestamp>` | Training log path |
+| `--force` | false | Overwrite generated files |
+
+## `/tinker next`
+
+Shows wizard progress and the next recommended action.
+
+## `/tinker reset`
+
+Deletes `.tinker-pi/` wizard state for this project. It does not delete training data, generated scripts, logs, or checkpoints.
+
 ## `/tinker setup`
 
 Checks local prerequisites:

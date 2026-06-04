@@ -13,6 +13,7 @@ Adding another framework inside Pi would make the user experience worse. Pi shou
 `pi-tinker` handles:
 
 - discovery: skills that tell Pi when and how to use Tinker,
+- a beginner step-by-step wizard (`/tinker start`, `/tinker next`, `/tinker reset`),
 - setup checks,
 - JSONL plus Python-backed renderer/token-mask validation,
 - guided project initialization,
@@ -43,6 +44,8 @@ Tinker/Tinker Cookbook handle:
 ## Ideal user flow
 
 ```text
+/tinker start data/train.jsonl
+/tinker next
 /tinker setup
 /tinker init data/train.jsonl
 /tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
