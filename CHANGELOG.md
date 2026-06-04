@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.2
+
+Launch polish:
+
+- Added GitHub issue templates for onboarding friction, dataset conversion problems, and training errors.
+- Added `docs/demo.md` with the shortest no-data demo and expected outputs.
+- Added a copy-paste Pi agent prompt to the README.
+- Prepared repo metadata/release polish for public discovery.
+
 ## 0.6.1
 
 Onboarding clarity pass:

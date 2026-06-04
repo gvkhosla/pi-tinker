@@ -1,0 +1,35 @@
+name: Tinker training error
+description: A generated training/eval/smoke command failed
+labels: [needs-triage, training]
+body:
+  - type: input
+    id: command
+    attributes:
+      label: Command that failed
+      placeholder: /tinker smoke train_sft.py --yes
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: /tinker doctor output
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error output
+      description: Paste stdout/stderr or the Pi error report.
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Quick checks
+      options:
+        - label: I have `TINKER_API_KEY` set.
+        - label: I installed `tinker-cookbook`.
+        - label: `/tinker validate ...` passed or I understand its warnings.
+        - label: I am running a 2-step smoke test before scaling.

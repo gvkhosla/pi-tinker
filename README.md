@@ -20,7 +20,7 @@ pi install git:github.com/gvkhosla/pi-tinker
 /tinker doctor
 ```
 
-`/tinker demo` creates a small customer-support fine-tuning project so you can see the whole flow before bringing your own data.
+`/tinker demo` creates a small customer-support fine-tuning project so you can see the whole flow before bringing your own data. See [`docs/demo.md`](docs/demo.md) for the full terminal demo transcript.
 
 ## 10-minute path with your own data
 
@@ -60,6 +60,12 @@ or, with user data:
 
 ```text
 /tinker new <csv|json|jsonl|docs-dir> --goal "what should improve"
+```
+
+You can also ask Pi:
+
+```text
+Use pi-tinker to help me fine-tune a model on this CSV. Start with /tinker doctor, validate the data, run a baseline eval and 2-step smoke test, and do not scale training until eval is defined.
 ```
 
 ## What it does right now

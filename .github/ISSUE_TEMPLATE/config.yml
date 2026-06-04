@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Start with the demo
+    url: https://github.com/gvkhosla/pi-tinker#30-second-demo-no-data-required
+    about: If you are new, try `/tinker demo` first.

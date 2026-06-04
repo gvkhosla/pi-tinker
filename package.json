@@ -1,6 +1,6 @@
 {
   "name": "pi-tinker",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Pi package for making Tinker fine-tuning easier: golden-path onboarding, data prep, validation, evals, SFT scaffolding, and checkpoint registration.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/gvkhosla/pi-tinker#readme",

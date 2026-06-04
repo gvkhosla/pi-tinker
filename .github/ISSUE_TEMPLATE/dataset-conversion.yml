@@ -1,0 +1,46 @@
+name: Dataset conversion problem
+description: /tinker prepare or /tinker new could not convert your data correctly
+labels: [needs-triage, data]
+body:
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      placeholder: /tinker prepare data.csv --out data/train.jsonl
+    validations:
+      required: true
+  - type: dropdown
+    id: input-type
+    attributes:
+      label: Input type
+      options:
+        - CSV
+        - JSON
+        - JSONL
+        - TXT/MD
+        - docs directory
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Small sample of the input data
+      description: Remove secrets/private data. A header row plus 2 rows is enough for CSV.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: output
+    attributes:
+      label: Error or bad output
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: /tinker doctor output
+      render: text
+    validations:
+      required: false
