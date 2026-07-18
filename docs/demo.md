@@ -1,46 +1,77 @@
-# 60-second pi-tinker demo
+# 60-second demo
 
-This is the shortest path to see what the package does without bringing your own data.
+Use this demo to see what `pi-tinker` creates. It does **not** call the Tinker API or start training.
+
+## 1. Install
 
 ```bash
 pi install git:github.com/gvkhosla/pi-tinker
+pi
 ```
 
-Then in Pi:
+## 2. Create the example project
+
+Inside Pi:
 
 ```text
 /tinker demo
+```
+
+This creates a small customer-support dataset and these editable files:
+
+```text
+data/train.jsonl
+train_sft.py
+eval.py
+eval_checkpoint.py
+tinker.yaml
+notes/plan.md
+```
+
+## 3. Check your progress
+
+```text
 /tinker next
 /tinker doctor
 ```
 
-Expected result:
+- `/tinker next` tells you what to do next.
+- `/tinker doctor` checks Python, packages, your API key, and generated files.
 
-- A tiny customer-support training dataset is copied into `examples/customer-support/train.jsonl`.
-- Editable project files are generated: `train_sft.py`, `eval.py`, `eval_checkpoint.py`, `tinker.yaml`, and `notes/plan.md`.
-- `.tinker-pi/state.json` tracks your progress.
-- `/tinker next` shows the next safe step.
-- `/tinker doctor` tells you what is missing before real Tinker API usage.
+You can stop here without spending anything.
 
-With your own data, use:
+## Try your own data
 
-```text
-/tinker new data.csv --goal "better customer support answers"
-```
-
-CSV shape:
+A simple CSV is enough:
 
 ```csv
 question,answer
 How do I cancel?,Go to Settings → Billing → Cancel subscription.
-My order is late,Sorry — send us your order number and we’ll check it.
+My order is late,Send us your order number and we will check it.
 ```
 
-Real training requires `TINKER_API_KEY` and `tinker-cookbook` installed. The recommended flow is always:
+Then run:
 
 ```text
-/tinker doctor
-/tinker validate data/train.jsonl --model thinkingmachines/Inkling
-/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9 --yes
-/tinker smoke train_sft.py --yes
+/tinker improve data.csv --goal "better support answers" --budget demo
 ```
+
+The `demo` budget still makes no API calls.
+
+## Continue to a real smoke run
+
+First install Inkling's Python dependencies:
+
+```bash
+uv pip install -U 'tinker-cookbook[inkling]'
+export TINKER_API_KEY="your-api-key"
+```
+
+Then validate and run only two training steps:
+
+```text
+/tinker validate data/train.jsonl
+/tinker improve data.csv --goal "better support answers" --budget smoke --yes
+```
+
+The `smoke` budget uses the Tinker API. Review the command before adding `--yes`.

@@ -1,63 +1,72 @@
 # Using pi-tinker with coding agents
 
-Pi is the primary interface because `pi-tinker` can register Inkling as a model, expose `/tinker` commands, render reports, monitor runs, and switch directly into trained checkpoints. The generated training and evaluation code is ordinary Python, so the workflow is not locked to Pi.
+Pi is the main interface. Other coding agents can run the same `/tinker` workflows through a small shell adapter.
 
-## Pi (recommended)
-
-Install the package and use it interactively:
+## Pi
 
 ```bash
 pi install git:github.com/gvkhosla/pi-tinker
 pi
 ```
 
+Then use `/tinker` commands directly:
+
 ```text
-/tinker inkling
+/tinker demo
 /tinker doctor
-/tinker new data.csv --model thinkingmachines/Inkling --goal "better answers"
+/tinker improve data.csv --goal "better answers" --budget demo
 ```
 
-## Claude Code, Codex, Cursor, Copilot, Gemini CLI, and shell-capable agents
+Pi also lets you select Inkling or a trained checkpoint with `/model`.
 
-Give the agent this instruction:
+## Claude Code, Codex, Cursor, Copilot, or Gemini CLI
 
-> Read `AGENTS.md` and `docs/coding-agents.md`. Use `pi-tinker-agent` for `/tinker` workflows. Inspect and edit the generated Python directly. Never run an API-using stage without explicit approval, and keep baseline/checkpoint Inkling effort identical.
+From this repository, replace `/tinker` with `node scripts/agent-cli.mjs`:
 
-When this repository is checked out, invoke the adapter directly:
+| In Pi | In another coding agent's shell |
+|---|---|
+| `/tinker demo` | `node scripts/agent-cli.mjs demo` |
+| `/tinker doctor` | `node scripts/agent-cli.mjs doctor` |
+| `/tinker validate data/train.jsonl` | `node scripts/agent-cli.mjs validate data/train.jsonl` |
+| `/tinker improve data.csv --budget demo` | `node scripts/agent-cli.mjs improve data.csv --budget demo` |
+
+For example:
 
 ```bash
-node scripts/agent-cli.mjs inkling
 node scripts/agent-cli.mjs doctor
-node scripts/agent-cli.mjs validate data/train.jsonl --model thinkingmachines/Inkling
-node scripts/agent-cli.mjs new data.csv --goal "better support answers"
+node scripts/agent-cli.mjs improve data.csv --goal "better support answers" --budget demo
 ```
 
-When installed from npm, use its binary:
+The adapter prints the same report that Pi displays. Generated Python and JSONL are identical.
 
-```bash
-pi-tinker-agent inkling
-pi-tinker-agent doctor
-pi-tinker-agent --cwd /path/to/project new data.csv --goal "better support answers"
+## Prompt to give your agent
+
+```text
+Read AGENTS.md. Use pi-tinker to prepare and validate my data for Inkling.
+Show me the generated files. Do not call the API or start training until I approve.
+Keep the baseline and checkpoint eval at the same reasoning effort.
 ```
 
-The adapter runs the same extension in Pi's non-interactive print mode. It does not create a chat session. Commands that can use the Tinker API remain confirmation-first and require `--yes` in non-interactive use.
+## Safe workflow
 
-## Agent-safe operating loop
+1. Run `doctor`.
+2. Prepare and inspect the data.
+3. Create and inspect held-out eval examples.
+4. Validate the renderer and token masks.
+5. Ask before any command that uses the API.
+6. Run a two-step smoke test before a larger run.
+7. Compare the base model and checkpoint at the same Inkling effort.
 
-1. Run `pi-tinker-agent inkling` and `pi-tinker-agent doctor`.
-2. Prepare or inspect data without API usage.
-3. Define and inspect held-out eval rows.
-4. Validate renderer/token masks.
-5. Ask for approval before baseline sampling or training.
-6. Run a two-step smoke test before scaling.
-7. Compare baseline and checkpoint at the same Inkling effort.
-8. Leave generated `train_sft.py`, `eval.py`, JSONL, and YAML editable and visible.
+The `demo` budget makes no API calls. The `smoke`, `small`, and `real` budgets do.
 
-## Repository instruction files
+## Agent instruction files
 
-- `AGENTS.md` is the canonical tool-agnostic agent guide.
-- `CLAUDE.md` and `GEMINI.md` direct those agents to the canonical guide.
-- `.github/copilot-instructions.md` provides GitHub Copilot instructions.
-- `.cursor/rules/pi-tinker.mdc` provides Cursor rules.
+The repository includes instructions for common agents:
 
-Do not duplicate the training framework inside an agent integration. Tinker and Tinker Cookbook remain the implementation layer; agents should operate the generated files and existing APIs.
+- `AGENTS.md` — canonical guide for all agents
+- `CLAUDE.md` — Claude Code
+- `GEMINI.md` — Gemini CLI
+- `.github/copilot-instructions.md` — GitHub Copilot
+- `.cursor/rules/pi-tinker.mdc` — Cursor
+
+All agents should use official Tinker and Tinker Cookbook APIs and keep the generated code visible and editable.

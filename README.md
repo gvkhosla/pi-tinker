@@ -1,34 +1,40 @@
 # pi-tinker
 
-Run and fine-tune [Inkling](https://thinkingmachines.ai/inkling/)—Thinking Machines Lab's multimodal open-weights model—with [Tinker](https://thinkingmachines.ai/tinker/) from inside [Pi](https://pi.dev), without learning the whole post-training stack first.
+Use and fine-tune [Inkling](https://thinkingmachines.ai/inkling/) with [Tinker](https://thinkingmachines.ai/tinker/) inside [Pi](https://pi.dev).
 
-`pi-tinker` is intentionally **not** another training framework. It is a beginner-friendly operator around Tinker/Tinker Cookbook: bring CSV/JSON/JSONL/docs, convert and validate data, create editable Python, run baseline evals, smoke-test training, monitor checkpoints, compare before/after quality, generate app snippets, and chat with the trained checkpoint in Pi.
+`pi-tinker` helps you turn examples into a trained model without hiding the real work. It prepares data, writes editable Python, checks your setup, runs evals, starts small training runs, and lets you chat with checkpoints in Pi.
 
-## Who this is for
+> **New here?** Install the package and run `/tinker demo`. The demo does not use the Tinker API.
 
-Builders with examples who want to fine-tune an open model but do **not** yet know the Tinker/post-training workflow. If you have support tickets, prompt/completion pairs, extraction examples, writing examples, or task-specific eval cases, this helps you get to a useful first run faster.
+## Pick what you want to do
 
-## Inkling support
+### 1. Chat with Inkling in Pi
 
-Installing `pi-tinker` registers two ready-to-use Pi models through Tinker's Anthropic-compatible endpoint:
-
-- `thinkingmachines/Inkling` — 64K Tinker context
-- `thinkingmachines/Inkling:peft:262144` — 256K Tinker context
-
-Both support Pi tool calls, image input, streamed thinking, and controllable effort. In Pi, Shift+Tab maps to Inkling's effort levels (`low=0.2`, `medium=0.7`, `high=0.9`, `xhigh=0.99`). Select Inkling with `/model` after setting `TINKER_API_KEY`.
-
-```text
-/tinker inkling
-/tinker inkling sweep --prompt "A representative task" --efforts low,medium,high,xhigh --yes
-```
-
-Audio input and multimodal post-training use Tinker's native `tml-renderers` recipes; Pi's current model message format supports text and images.
-
-## 30-second demo, no data required
+Install the package:
 
 ```bash
 pi install git:github.com/gvkhosla/pi-tinker
 ```
+
+Set your Tinker API key and open Pi:
+
+```bash
+export TINKER_API_KEY="your-api-key"
+pi
+```
+
+Then:
+
+```text
+/tinker inkling
+/model
+```
+
+Choose one of the Tinker Inkling models from `/model`. Inkling supports tools, images, streamed thinking, and adjustable reasoning effort.
+
+### 2. Try the no-cost demo
+
+Inside Pi:
 
 ```text
 /tinker demo
@@ -36,285 +42,177 @@ pi install git:github.com/gvkhosla/pi-tinker
 /tinker doctor
 ```
 
-`/tinker demo` creates a small customer-support fine-tuning project so you can see the whole flow before bringing your own data. See [`docs/demo.md`](docs/demo.md) for the full terminal demo transcript.
+This creates a tiny customer-support project with editable training data, Python scripts, and an eval. It stops before any API usage.
 
-## 10-minute path with your own data
+### 3. Fine-tune Inkling on your data
 
-Create a tiny CSV:
+Start with CSV, JSON, JSONL, text files, Markdown, or a docs directory:
+
+```text
+/tinker improve data.csv --goal "better customer support answers" --budget demo
+```
+
+The `demo` budget prepares everything without calling the API. Review the generated files, then run a small smoke test:
+
+```text
+/tinker improve data.csv --goal "better customer support answers" --budget smoke --yes
+```
+
+If the smoke run and eval look good:
+
+```text
+/tinker improve data.csv --goal "better customer support answers" --budget small --yes
+```
+
+`pi-tinker` guides you through:
+
+```text
+data → validation → baseline eval → 2-step smoke run → training → checkpoint eval → chat in Pi
+```
+
+## Setup for fine-tuning
+
+Chatting with Inkling only needs Pi and `TINKER_API_KEY`. Fine-tuning also needs Python 3.11+ and Inkling's renderer stack:
+
+```bash
+uv pip install -U 'tinker-cookbook[inkling]'
+```
+
+This installs compatible versions of the Tinker SDK, Tinker Cookbook, and `tml-renderers`.
+
+Check everything with:
+
+```text
+/tinker doctor
+```
+
+## What files does it create?
+
+The important output is normal code and data you can inspect and edit:
+
+```text
+data/train.jsonl      training conversations
+data/eval.jsonl       held-out evaluation examples
+train_sft.py          Tinker Cookbook training script
+eval.py               baseline/checkpoint eval script
+tinker.yaml           readable run settings
+notes/plan.md         experiment notes
+```
+
+Tinker and Tinker Cookbook remain the training layer. `pi-tinker` is an operator around them, not a separate framework.
+
+## A tiny data example
+
+CSV:
 
 ```csv
 question,answer
 How do I cancel?,Go to Settings → Billing → Cancel subscription.
-My order is late,Sorry — send us your order number and we’ll check it.
-The app crashes after login,Update the app and restart. If it still crashes, send your device type and app version.
+My order is late,Send us your order number and we will check it.
 ```
 
-Then run the managed operator:
-
-```text
-/tinker improve data.csv --model thinkingmachines/Inkling --goal "better customer support answers" --budget demo
-```
-
-When the demo/no-API setup looks good, move through safer budgets:
-
-```text
-/tinker improve data.csv --goal "better customer support answers" --budget smoke --yes
-/tinker improve data.csv --goal "better customer support answers" --budget small --yes
-/tinker deploy latest
-```
-
-Or drive the steps manually:
-
-```text
-/tinker new data.csv --model thinkingmachines/Inkling --goal "better customer support answers"
-/tinker doctor
-/tinker validate data/train.jsonl --model thinkingmachines/Inkling
-/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9 --yes
-/tinker smoke train_sft.py --yes
-/tinker next
-```
-
-The extension keeps showing the next safe step: validate → baseline eval → 2-step smoke test → train → compare → deploy/use checkpoint.
-
-If you try it and get stuck, please open an issue with the command you ran and the `/tinker doctor` output.
-
-## For coding agents
-
-Pi is the primary and richest interface, but the workflow also works from Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, and other shell-capable coding agents. See [`AGENTS.md`](AGENTS.md) and [`docs/coding-agents.md`](docs/coding-agents.md).
-
-From this checkout, agents can invoke the same operator non-interactively:
-
-```bash
-node scripts/agent-cli.mjs inkling
-node scripts/agent-cli.mjs doctor
-node scripts/agent-cli.mjs new data.csv --goal "what should improve"
-```
-
-When installed from npm, the equivalent command is `pi-tinker-agent`. Generated training/eval files remain ordinary editable Python and JSONL. API-using commands remain approval-first.
-
-You can ask any coding agent:
-
-```text
-Read AGENTS.md and use pi-tinker to help me fine-tune Inkling on this CSV. Run doctor, validate the data, define a baseline eval, and do not use the API or scale training until I approve.
-```
-
-Pi users can run the same flow directly with `/tinker ...` and then select Inkling or a checkpoint using `/model`.
-
-## What it does right now
-
-### 1. Adds Tinker skills to Pi
-
-The skill markdown is also readable by other coding agents as a research/debug runbook.
-
-- `/skill:tinker-research` — plan and run Tinker experiments: SFT, RL, DPO, distillation, evaluation, hyperparameters, checkpoints, weight export, and experiment notes.
-- `/skill:tinker-debug` — diagnose slow training, hangs, renderer/tokenization issues, checkpoint/export mismatches, opaque errors, and service-vs-user-code problems.
-
-### 2. Adds a `/tinker` command
-
-```text
-/tinker inkling
-/tinker inkling sweep --prompt "my task" --efforts low,medium,high,xhigh --yes
-/tinker improve data.csv --goal "better support answers" --budget demo
-/tinker deploy latest
-/tinker demo
-/tinker new data.csv --goal "better support answers"
-/tinker new --example customer-support
-/tinker prepare data.csv --out data/train.jsonl
-/tinker recommend --goal "structured extraction"
-/tinker doctor
-/tinker examples list
-/tinker start data/train.jsonl
-/tinker next
-/tinker reset
-/tinker setup
-/tinker init data/train.jsonl
-/tinker validate data/train.jsonl --model thinkingmachines/Inkling
-/tinker eval init
-/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9
-/tinker sft data/train.jsonl --model thinkingmachines/Inkling --steps 20
-/tinker smoke train_sft.py
-/tinker monitor logs/my-run
-/tinker checkpoints logs/my-run
-/tinker status [log_dir]
-/tinker use tinker://.../sampler_weights/... [alias]
-/tinker use --list
-/tinker use --remove <alias-or-tinker-path>
-```
-
-### 3. Adds a managed improvement operator
-
-`/tinker improve` is the highest-level workflow. It can prepare data, scaffold files, run doctor/validation, ensure evals exist, run baseline evals, run 2-step smoke tests, scale to a short/real run with confirmation, evaluate checkpoints, compare wins/regressions, register the checkpoint in Pi, and suggest what data to add next.
-
-Budgets:
-
-- `demo` — no API usage; setup + doctor + lightweight validation.
-- `smoke` — baseline eval + 2-step smoke train, then stop.
-- `small` — short training run after smoke.
-- `real` — larger run, still confirmation-first.
-
-### 4. Adds app/deploy snippets
-
-`/tinker deploy <checkpoint-or-alias>` generates a deploy folder with `.env.example`, Python client, Node client, FastAPI wrapper, and README for using a Tinker sampler checkpoint through Tinker's OpenAI-compatible endpoint. Pi model chat itself uses the Anthropic-compatible endpoint for richer Inkling tool/thinking support.
-
-### 5. Adds a real golden path for beginners
-
-`/tinker new` starts from an existing chat JSONL file, converts CSV/JSON/docs into chat JSONL, or copies a built-in example. It scaffolds the project, recommends starter settings, creates wizard state, and shows the next command.
-
-`/tinker start` remains the step-by-step wizard for people who already have training JSONL. It tracks progress in `.tinker-pi/state.json` and always shows the next recommended action: environment, data, validation, baseline eval, smoke test, training, checkpoint eval, comparison, and chatting with the checkpoint.
-
-### 6. Adds data preparation, recommendations, doctor, and examples
-
-- `/tinker prepare` converts CSV, JSON, JSONL prompt/response rows, TXT/MD files, or docs directories into Tinker chat JSONL.
-- `/tinker recommend` picks a starter model/method/settings from the user's goal.
-- `/tinker doctor` checks API key, Python, Tinker imports, generated scripts, selected data, and next step.
-- `/tinker examples` provides concrete starter tasks: customer support, structured extraction, and concise writing.
-
-### 7. Adds eval-first before training
-
-`/tinker eval init` creates an editable `eval.py` and `data/eval.jsonl`. Users can run a baseline eval before training, evaluate a checkpoint after training, and compare wins/regressions.
-
-### 8. Scaffolds editable SFT projects
-
-`/tinker init ...` or `/tinker sft ...` writes:
-
-```text
-train_sft.py          # editable tinker-cookbook SFT script
-eval_checkpoint.py    # quick sampling smoke test for a checkpoint
-tinker.yaml           # human-readable run summary
-notes/plan.md         # experiment plan template
-```
-
-### 9. Runs Inkling and trained checkpoints as Pi models
-
-Base Inkling is registered automatically through Tinker's Anthropic-compatible endpoint, which preserves tool calls, image input, streamed thinking blocks, and effort controls. `/tinker use tinker://.../sampler_weights/... my-model --base-model thinkingmachines/Inkling` registers a fine-tuned checkpoint with the same capabilities.
-
-> Tinker's compatible inference endpoints are currently best for model inspection and internal testing, not production serving.
-
-## Install
-
-### From a local checkout
-
-```bash
-pi install /path/to/pi-tinker
-```
-
-For one run only:
-
-```bash
-pi -e /path/to/pi-tinker
-```
-
-### From GitHub
-
-```bash
-pi install git:github.com/gvkhosla/pi-tinker
-```
-
-## Requirements
-
-- Pi installed.
-- Python 3.11+ recommended for `tinker-cookbook`.
-- Tinker API key:
-
-```bash
-export TINKER_API_KEY="your-api-key"
-```
-
-- Python 3.11+ and Inkling's Tinker/Cookbook renderer stack:
-
-```bash
-uv pip install -U 'tinker-cookbook[inkling]'
-# Includes compatible Tinker SDK 0.23+ and tml-renderers.
-```
-
-`tml-renderers` requires PyTorch 2.10+. The Inkling extra installs compatible dependencies.
-
-## Quickstart
-
-Fastest Inkling path with a CSV/JSONL/docs input:
-
-```text
-/tinker new data.csv --model thinkingmachines/Inkling --goal "better customer support answers"
-/tinker doctor
-/tinker validate data/train.jsonl --model thinkingmachines/Inkling
-/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9 --yes
-/tinker smoke train_sft.py --yes
-/tinker monitor logs/<run-dir>
-```
-
-No data yet? Try a concrete example:
-
-```text
-/tinker demo
-/tinker next
-```
-
-Then run the generated smoke test:
-
-```bash
-python train_sft.py max_steps=2
-```
-
-If the smoke test looks good, scale the run:
-
-```bash
-python train_sft.py max_steps=100
-```
-
-Monitor from Pi:
-
-```text
-/tinker status logs/<run-dir>
-```
-
-Register a sampler checkpoint:
-
-```text
-/tinker use tinker://.../sampler_weights/... my-sft
-/model
-```
-
-## Data format for `/tinker sft`
-
-JSONL, one conversation per line:
+Or chat JSONL, one conversation per line:
 
 ```json
 {"messages":[{"role":"user","content":"How do I reset my password?"},{"role":"assistant","content":"Go to Settings → Security → Reset password."}]}
 ```
 
-`/tinker validate` runs basic JSONL/message-shape checks plus a Python-backed Tinker Cookbook renderer/token-mask audit when dependencies are installed. For Inkling it loads the recommended TMLv0 renderer through `tml-renderers`. It returns a clear `READY`, `SMOKE ONLY`, or `FIX DATA FIRST` recommendation with token histograms, truncation risk, zero-trainable rows, longest examples, decoded previews, and trainable-token snippets.
+## Reasoning effort, simply explained
 
-Inkling's generic Cookbook SFT builder conditions examples at its default `effort=0.9` (high). `/tinker inkling sweep` helps choose an inference effort; baseline and checkpoint evals accept `--effort` so comparisons stay matched.
+Inkling can spend different amounts of compute thinking. In Pi, Shift+Tab changes the thinking level.
 
-## Command reference
+| Pi level | Inkling effort |
+|---|---:|
+| low | 0.2 |
+| medium | 0.7 |
+| high | 0.9 |
+| xhigh | 0.99 |
 
-See [`docs/commands.md`](docs/commands.md).
+The default fine-tuning and eval effort is `0.9` (`high`). Always compare the base model and trained checkpoint at the same effort.
 
-## Design principles
-
-- Keep Tinker and Tinker Cookbook as the real training layer.
-- Generate normal, editable Python instead of hidden framework state.
-- Encourage baseline evals and data inspection before spending compute.
-- Make common workflows discoverable in Pi.
-- Make trained checkpoints easy to inspect inside Pi.
-
-## Package structure
+To see how effort changes a representative answer:
 
 ```text
-extensions/tinker.ts       # Pi extension with /tinker command and provider registration
-skills/tinker-research/    # Pi skill adapted from tinker-cookbook research skill
-skills/tinker-debug/       # Pi skill adapted from tinker-cookbook debug skill
-docs/                      # user/developer docs
-examples/customer-support.csv # copy-paste starter CSV
-AGENTS.md                  # quickstart and boundaries for coding agents
-scripts/smoke-test.mjs     # lightweight repository checks
+/tinker inkling sweep --prompt "Solve a task like the ones in my eval" --efforts low,medium,high,xhigh --yes
 ```
+
+## The four training budgets
+
+| Budget | Uses API? | What it does |
+|---|---:|---|
+| `demo` | No | Prepares files, checks setup, and validates data |
+| `smoke` | Yes | Runs a baseline eval and two training steps |
+| `small` | Yes | Runs a short training and compares the checkpoint |
+| `real` | Yes | Runs a larger confirmed experiment |
+
+API-using stages require confirmation. In non-interactive commands, `--yes` is the confirmation.
+
+## Useful commands
+
+```text
+/tinker inkling                         Inkling setup and model information
+/tinker demo                            Create a no-cost example project
+/tinker improve <data> --goal "..."     Run the guided workflow
+/tinker doctor                          Check your environment
+/tinker validate data/train.jsonl       Inspect data and token masks
+/tinker next                            Show the next safe step
+/tinker monitor logs/<run>              Watch training metrics
+/tinker checkpoints logs/<run>          Find and register checkpoints
+/model                                  Choose Inkling or a trained checkpoint
+```
+
+See the full [`/tinker` command reference](docs/commands.md).
+
+## Other coding agents
+
+Pi is the main interface, but Claude Code, Codex, Cursor, Copilot, Gemini CLI, and other shell-capable agents can use the same workflow.
+
+From a repository checkout:
+
+```bash
+node scripts/agent-cli.mjs inkling
+node scripts/agent-cli.mjs doctor
+node scripts/agent-cli.mjs improve data.csv --goal "better answers" --budget demo
+```
+
+Ask your agent:
+
+```text
+Read AGENTS.md. Use pi-tinker to prepare and validate this data for Inkling.
+Do not call the API or start training until I approve.
+```
+
+Generated Python and JSONL stay editable regardless of which agent you use. See [`docs/coding-agents.md`](docs/coding-agents.md).
+
+## Troubleshooting
+
+Run:
+
+```text
+/tinker doctor
+```
+
+If you are in Pi, you can also use:
+
+```text
+/skill:tinker-debug <paste the error>
+```
+
+When opening a GitHub issue, include the command you ran and the `/tinker doctor` output. Do not include your API key.
+
+## More documentation
+
+- [60-second demo](docs/demo.md)
+- [Command reference](docs/commands.md)
+- [Using other coding agents](docs/coding-agents.md)
+- [Real training runbook](docs/real-training-runbook.md)
+- [Design principles](docs/design.md)
 
 ## Development
 
 ```bash
 npm test
-pi -e . --list-models
+npm pack --dry-run
 ```
 
 ## License and attribution

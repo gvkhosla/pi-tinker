@@ -1,6 +1,21 @@
 # `/tinker` command reference
 
-Pi users run these as `/tinker ...`. Other shell-capable coding agents run the same subcommands with `pi-tinker-agent ...` or `node scripts/agent-cli.mjs ...`; see [`coding-agents.md`](coding-agents.md).
+Pi users run these as `/tinker ...`. Other coding agents replace `/tinker` with `node scripts/agent-cli.mjs`; see [`coding-agents.md`](coding-agents.md).
+
+## Start here
+
+You only need a few commands for the normal workflow:
+
+| Goal | Command |
+|---|---|
+| See a free local demo | `/tinker demo` |
+| Prepare your own data without API usage | `/tinker improve <data> --goal "..." --budget demo` |
+| Check your setup | `/tinker doctor` |
+| See the next step | `/tinker next` |
+| Learn about Inkling | `/tinker inkling` |
+| Choose Inkling or a checkpoint | `/model` |
+
+The `demo` budget makes no API calls. Commands using `--yes` may sample or train through the Tinker API.
 
 ## `/tinker inkling [info|sweep]`
 
@@ -21,7 +36,7 @@ uv pip install -U 'tinker-cookbook[inkling]'
 
 ## `/tinker improve [input] [options]`
 
-Managed fine-tuning operator. This is the highest-level command for people who want Pi to run the safe loop instead of remembering every step.
+The easiest way to fine-tune. It prepares data, checks it, runs a small test, trains, evaluates the checkpoint, and registers it in Pi.
 
 ```text
 /tinker improve data.csv --goal "better support answers" --budget demo
@@ -29,20 +44,15 @@ Managed fine-tuning operator. This is the highest-level command for people who w
 /tinker improve data.csv --goal "better support answers" --budget small --yes
 ```
 
-What it does:
+In order, it does this:
 
-1. prepare/locate data,
-2. scaffold editable Tinker Cookbook files,
-3. run `/tinker doctor` checks,
-4. validate data lightly and show next validation command,
-5. ensure eval files exist,
-6. run baseline eval before training,
-7. run 2-step smoke training,
-8. scale training only with confirmation / `--yes`,
-9. evaluate checkpoint on the same eval,
-10. compare wins/regressions,
-11. register the checkpoint for chat in Pi,
-12. suggest what data to add next from eval failures.
+1. prepares your data and editable Python files,
+2. checks the environment and validates examples,
+3. creates a held-out eval and measures the base model,
+4. runs only two training steps first,
+5. scales only after confirmation,
+6. evaluates and registers the checkpoint,
+7. shows wins, regressions, and suggested data improvements.
 
 Budgets:
 
