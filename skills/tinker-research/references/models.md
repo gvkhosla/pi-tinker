@@ -2,6 +2,15 @@
 
 Full listing of available models with types, architecture, and sizes.
 
+## Thinking Machines
+
+| Model | Type | Arch | Size |
+|-------|------|------|------|
+| `thinkingmachines/Inkling` | Reasoning + Vision + native audio | MoE, 975B total / 41B active | Large |
+| `thinkingmachines/Inkling:peft:262144` | Reasoning + Vision inference variant | MoE, 975B total / 41B active | Large |
+
+For fine-tuning, use `thinkingmachines/Inkling`. Install `tinker-cookbook[inkling]` and let `model_info` select the official TMLv0 renderer. Inkling effort is a float in `[0, 1)`; default generic SFT effort is `0.9`.
+
 ## Qwen family
 
 | Model | Type | Arch | Size |
@@ -71,7 +80,7 @@ Use the `_disable_thinking` renderer variant when you want direct instruction-fo
 - **Compact**: 1B-4B parameters
 - **Small**: 8B parameters
 - **Medium**: 27B-32B parameters
-- **Large**: 70B+ parameters
+- **Large**: 70B+ total parameters (for MoE, also inspect active parameters and Tinker pricing)
 
 ## Renderer matching
 
@@ -81,7 +90,7 @@ from tinker_cookbook import model_info
 renderer_name = model_info.get_recommended_renderer_name(model_name)
 ```
 
-The mapping is maintained in `tinker_cookbook/model_info.py`. Never hardcode renderer names.
+The mapping is maintained in `tinker_cookbook/model_info.py`. Never hardcode renderer names. Inkling's renderer implementation is supplied by `tml-renderers` through the `tinker-cookbook[inkling]` extra.
 
 ## Reference
 

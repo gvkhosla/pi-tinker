@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.0
+
+Inkling support:
+
+- Registered `thinkingmachines/Inkling` (64K) and its 256K Tinker variant as Pi models.
+- Switched Pi model chat to Tinker's Anthropic-compatible endpoint for tool use, image input, streamed thinking, and checkpoint support.
+- Added Inkling reasoning-effort mappings and `/tinker inkling sweep` using Tinker's official Cookbook script.
+- Made Inkling the default model for new, improve, validation, and eval workflows while retaining Qwen alternatives.
+- Added Inkling-aware checkpoint metadata, dependency diagnostics, TMLv0 validation, and effort-matched before/after evals.
+- Updated generated projects and documentation for Python 3.11+, Tinker 0.23+, `tml-renderers`, and `tinker-cookbook[inkling]`.
+- Added the `pi-tinker-agent` non-interactive shell adapter plus repository guidance for Claude Code, Codex, Cursor, Copilot, Gemini CLI, and other coding agents.
+- Restored and updated the packaged Tinker research/debug skills so full package tests and published skill discovery work again.
+
 ## 0.7.0
 
 Managed improvement and deployment:

@@ -1,0 +1,14 @@
+---
+description: pi-tinker development and Tinker/Inkling workflow rules
+alwaysApply: true
+---
+
+Read `AGENTS.md` and `docs/coding-agents.md` before making changes.
+
+Pi is the primary interactive interface. In Cursor's shell, invoke the same command workflow with:
+
+```bash
+node scripts/agent-cli.mjs <tinker-subcommand> [options]
+```
+
+Use official Tinker SDK, Tinker Cookbook, and `tml-renderers`. Keep generated Python editable and do not build a parallel training abstraction. Default to `thinkingmachines/Inkling` while preserving explicit alternative-model support. Keep baseline/checkpoint effort matched and require user approval before API-using eval or training stages.

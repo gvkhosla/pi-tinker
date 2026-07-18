@@ -10,6 +10,10 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCb);
 
 const TINKER_OAI_BASE_URL = "https://tinker.thinkingmachines.dev/services/tinker-prod/oai/api/v1";
+const TINKER_ANTHROPIC_BASE_URL = "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api";
+const INKLING_MODEL = "thinkingmachines/Inkling";
+const INKLING_256K_MODEL = "thinkingmachines/Inkling:peft:262144";
+const DEFAULT_MODEL = INKLING_MODEL;
 const STATE_PATH = path.join(os.homedir(), ".pi", "agent", "tinker-checkpoints.json");
 const MESSAGE_TYPE = "tinker-report";
 
@@ -21,11 +25,60 @@ type CheckpointModel = {
   contextWindow: number;
   maxTokens: number;
   addedAt: number;
+  baseModel?: string;
+  reasoning?: boolean;
+  vision?: boolean;
 };
 
 type TinkerState = {
   checkpoints: CheckpointModel[];
 };
+
+function isInklingModel(model?: string): boolean {
+  return Boolean(model?.startsWith("thinkingmachines/Inkling"));
+}
+
+function inklingCompat() {
+  return {
+    supportsEagerToolInputStreaming: false,
+    supportsLongCacheRetention: false,
+    supportsCacheControlOnTools: false,
+    forceAdaptiveThinking: true,
+    allowEmptySignature: true,
+    supportsToolReferences: false,
+  } as const;
+}
+
+function inklingThinkingLevels() {
+  return {
+    minimal: null,
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: "xhigh",
+    max: "max",
+  } as const;
+}
+
+function checkpointRegistration(options: {
+  id: string;
+  name: string;
+  baseModel?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+}): CheckpointModel {
+  const inkling = isInklingModel(options.baseModel);
+  return {
+    id: options.id,
+    name: options.name,
+    baseModel: options.baseModel,
+    reasoning: inkling,
+    vision: inkling,
+    contextWindow: options.contextWindow ?? (inkling ? 65_536 : 32_768),
+    maxTokens: options.maxTokens ?? (inkling ? 16_384 : 4_096),
+    addedAt: Date.now(),
+  };
+}
 
 function shellSplit(input: string): string[] {
   const out: string[] = [];
@@ -543,6 +596,9 @@ print(json.dumps({
   });
   const result = JSON.parse(stdout.trim().split(/\n/).slice(-1)[0] ?? "{}");
   if (!result.ok && result.stage !== "done") {
+    const installCommand = isInklingModel(model)
+      ? "uv pip install -U 'tinker-cookbook[inkling]'"
+      : "uv pip install -U tinker-cookbook";
     return [
       `# Python-backed validation could not run`,
       `- Stage: ${result.stage ?? "unknown"}`,
@@ -550,7 +606,7 @@ print(json.dumps({
       "",
       "Install/upgrade dependencies with:",
       "```bash",
-      "uv pip install -U tinker-cookbook",
+      installCommand,
       "```",
       "",
       "Falling back to lightweight JSONL checks is still useful, but renderer/token-mask validation requires Python dependencies.",
@@ -624,7 +680,7 @@ function makeEvalScript() {
 }
 
 function makeProjectReadme(options: { model: string; dataFile: string; logPath: string; successMetric: string }) {
-  return `# Tinker fine-tuning project\n\nThis project was scaffolded by \`pi-tinker\`. The important files are normal editable Python, not hidden framework state.\n\n## Goal\n\nFine-tune \`${options.model}\` on:\n\n\`${options.dataFile}\`\n\n## Success metric\n\n${options.successMetric || "Define this before scaling beyond a smoke test."}\n\n## Smoke test\n\n\`\`\`bash\nuv pip install tinker-cookbook\npython train_sft.py max_steps=2\n\`\`\`\n\n## Monitor\n\nInside Pi:\n\n\`\`\`text\n/tinker monitor ${options.logPath}\n/tinker status ${options.logPath}\n/tinker checkpoints ${options.logPath}\n\`\`\`\n\n## Scale up\n\nOnly scale after checking:\n\n- JSONL validation passed\n- renderer/token validation passed\n- smoke test produced metrics\n- decoded examples look correct\n- success metric/eval is defined\n\n\`\`\`bash\npython train_sft.py max_steps=100\n\`\`\`\n\n## Chat with a checkpoint in Pi\n\nAfter a sampler checkpoint appears in \`checkpoints.jsonl\`:\n\n\`\`\`text\n/tinker checkpoints ${options.logPath}\n/model\n\`\`\`\n`;
+  return `# Tinker fine-tuning project\n\nThis project was scaffolded by \`pi-tinker\`. The important files are normal editable Python, not hidden framework state.\n\n## Goal\n\nFine-tune \`${options.model}\` on:\n\n\`${options.dataFile}\`\n\n## Success metric\n\n${options.successMetric || "Define this before scaling beyond a smoke test."}\n\n## Smoke test\n\n\`\`\`bash\n${isInklingModel(options.model) ? "uv pip install -U 'tinker-cookbook[inkling]'" : "uv pip install -U tinker-cookbook"}\npython train_sft.py max_steps=2\n\`\`\`\n\n${isInklingModel(options.model) ? "Inkling uses its recommended TMLv0 renderer automatically. This generic SFT scaffold trains at the renderer default effort, 0.9 (high). Run `/tinker inkling sweep` before training and use the same effort for baseline and checkpoint evals.\n\n" : ""}## Monitor\n\nInside Pi:\n\n\`\`\`text\n/tinker monitor ${options.logPath}\n/tinker status ${options.logPath}\n/tinker checkpoints ${options.logPath}\n\`\`\`\n\n## Scale up\n\nOnly scale after checking:\n\n- JSONL validation passed\n- renderer/token validation passed\n- smoke test produced metrics\n- decoded examples look correct\n- success metric/eval is defined\n\n\`\`\`bash\npython train_sft.py max_steps=100\n\`\`\`\n\n## Chat with a checkpoint in Pi\n\nAfter a sampler checkpoint appears in \`checkpoints.jsonl\`:\n\n\`\`\`text\n/tinker checkpoints ${options.logPath}\n/model\n\`\`\`\n`;
 }
 
 function makeExampleEvalJsonl() {
@@ -888,7 +944,7 @@ function recommendPlan(goal: string, dataRows?: number): string {
   const structured = /json|extract|classif|label|schema|sql|regex|parse/.test(g);
   const reasoning = /math|reason|proof|solve|logic|agent|tool/.test(g);
   const writing = /write|tone|support|summar|rewrite|style|email|copy/.test(g);
-  const model = reasoning ? "Qwen/Qwen3.5-35B-A3B-Base" : structured ? "Qwen/Qwen3.5-9B-Base" : "Qwen/Qwen3.5-9B-Base";
+  const model = DEFAULT_MODEL;
   const examples = dataRows ? `${dataRows} detected rows` : "unknown row count";
   const rowsAdvice = !dataRows ? "Start with 20–100 high-quality examples for a smoke test, then scale." : dataRows < 20 ? "Good for a smoke test only; add more examples before expecting durable quality gains." : dataRows < 200 ? "Enough for an early SFT run if examples are high quality." : "Enough to try a serious SFT run after baseline eval passes.";
   const task = structured ? "SFT with strict eval for valid outputs" : reasoning ? "SFT first; consider RL only after strong evals exist" : writing ? "SFT with before/after human or rubric eval" : "SFT golden path";
@@ -938,18 +994,34 @@ async function writeExampleTemplate(cwd: string, slug: string, force = false): P
 async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<string> {
   const wizard = await readWizardState(cwd);
   const dataFile = dataFileArg ? path.resolve(cwd, dataFileArg) : wizard?.dataFile;
+  const model = wizard?.model ?? DEFAULT_MODEL;
   const checks: string[] = [];
   checks.push(process.env.TINKER_API_KEY ? "✅ TINKER_API_KEY is set" : "❌ TINKER_API_KEY is missing");
   checks.push((await commandExists("python3")) ? "✅ python3 found" : "❌ python3 not found");
   checks.push((await commandExists("uv")) ? "✅ uv found" : "⚠️ uv not found; pip fallback is okay");
   checks.push((await commandExists("tinker")) ? "✅ tinker CLI found" : "⚠️ tinker CLI not found");
-  for (const mod of ["tinker", "tinker_cookbook", "chz"]) {
+  if (isInklingModel(model)) {
+    try {
+      const { stdout } = await execFile("python3", ["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"], { timeout: 20_000 });
+      const [major, minor] = stdout.trim().split(".").map(Number);
+      checks.push(major > 3 || (major === 3 && minor >= 11) ? `✅ Python ${stdout.trim()} supports Inkling` : `❌ Inkling requires Python 3.11+ (found ${stdout.trim()})`);
+    } catch {}
+  }
+  const modules = isInklingModel(model) ? ["tinker", "tinker_cookbook", "chz", "tml_renderers"] : ["tinker", "tinker_cookbook", "chz"];
+  for (const mod of modules) {
     try {
       await execFile("python3", ["-c", `import ${mod}; print('ok')`], { cwd, timeout: 20_000 });
       checks.push(`✅ Python import ${mod}`);
     } catch {
       checks.push(`⚠️ Python cannot import ${mod}`);
     }
+  }
+  if (isInklingModel(model)) {
+    try {
+      const { stdout } = await execFile("python3", ["-c", "import importlib.metadata as m; print(m.version('tinker'))"], { timeout: 20_000 });
+      const [major, minor] = stdout.trim().split(".").map(Number);
+      checks.push(major > 0 || minor >= 23 ? `✅ Tinker SDK ${stdout.trim()} supports Inkling` : `❌ Inkling requires Tinker SDK 0.23+ (found ${stdout.trim()})`);
+    } catch {}
   }
   checks.push(existsSync(path.join(cwd, "train_sft.py")) ? "✅ train_sft.py exists" : "⬜ train_sft.py missing; run /tinker new or /tinker init");
   checks.push(existsSync(path.join(cwd, "eval.py")) ? "✅ eval.py exists" : "⬜ eval.py missing; run /tinker eval init");
@@ -971,6 +1043,9 @@ async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<str
       checks.push(`❌ eval.py does not compile: ${error?.message ?? String(error)}`);
     }
   }
+  if (isInklingModel(model)) {
+    checks.push("ℹ️ Inkling uses the TMLv0 renderer and default SFT effort 0.9 (high)");
+  }
   const next = wizard ? wizardSteps(cwd, wizard).find((step) => !step.done)?.nextCommand : "/tinker new";
   return [
     "# Tinker doctor",
@@ -981,6 +1056,7 @@ async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<str
     next ?? "/tinker next",
     "```",
     "",
+    isInklingModel(model) ? "Inkling dependency fix: `uv pip install -U 'tinker-cookbook[inkling]'`." : "",
     "If anything is confusing, run `/skill:tinker-debug` with this report.",
   ].join("\n");
 }
@@ -1000,6 +1076,27 @@ function budgetMaxSteps(budget: ImproveBudget, override?: unknown): number {
   if (budget === "small") return 20;
   if (budget === "real") return 100;
   return 0;
+}
+
+const INKLING_EFFORT_PRESETS: Record<string, number> = {
+  none: 0,
+  minimal: 0.1,
+  low: 0.2,
+  medium: 0.7,
+  high: 0.9,
+  xhigh: 0.99,
+};
+
+function parseInklingEfforts(value: unknown): number[] {
+  const raw = String(value ?? "low,medium,high,xhigh");
+  const efforts = raw.split(",").map((part) => {
+    const text = part.trim().toLowerCase();
+    return text in INKLING_EFFORT_PRESETS ? INKLING_EFFORT_PRESETS[text]! : Number(text);
+  });
+  if (efforts.length === 0 || efforts.some((effort) => !Number.isFinite(effort) || effort < 0 || effort >= 1)) {
+    throw new Error("--efforts must be comma-separated presets or floats in [0, 1), e.g. low,medium,high,xhigh or 0.2,0.7,0.9,0.99");
+  }
+  return efforts;
 }
 
 function managedRunPlan(budget: ImproveBudget): string {
@@ -1120,8 +1217,8 @@ Match modes:
   - prefix: normalized output starts with normalized expected
 
 Examples:
-  python eval.py --base-model Qwen/Qwen3.5-9B-Base --data data/eval.jsonl --out eval_results/baseline.json
-  python eval.py --model-path 'tinker://.../sampler_weights/...' --base-model Qwen/Qwen3.5-9B-Base --data data/eval.jsonl --out eval_results/step-20.json
+  python eval.py --base-model thinkingmachines/Inkling --effort 0.9 --data data/eval.jsonl --out eval_results/baseline.json
+  python eval.py --model-path 'tinker://.../sampler_weights/...' --renderer-model thinkingmachines/Inkling --effort 0.9 --data data/eval.jsonl --out eval_results/step-20.json
 """
 
 from __future__ import annotations
@@ -1135,7 +1232,7 @@ from typing import Any
 
 import tinker
 from tinker_cookbook import model_info
-from tinker_cookbook.renderers import get_renderer
+from tinker_cookbook.renderers import get_renderer, get_text_content
 
 
 def normalize(text: str) -> str:
@@ -1183,8 +1280,12 @@ async def main() -> None:
     parser.add_argument("--out", default="eval_results/result.json")
     parser.add_argument("--max-tokens", type=int, default=128)
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--effort", type=float, default=0.9, help="Inkling effort in [0, 1); ignored by other renderers")
     parser.add_argument("--limit", type=int, default=0, help="0 means all rows")
     args = parser.parse_args()
+
+    if not 0.0 <= args.effort < 1.0:
+        raise SystemExit("--effort must be in [0, 1)")
 
     rows = load_rows(args.data)
     if args.limit:
@@ -1214,7 +1315,10 @@ async def main() -> None:
         messages = row["messages"]
         expected = str(row["expected"])
         match = str(row.get("match", "contains"))
-        prompt = renderer.build_generation_prompt(messages, role="assistant")
+        prompt_kwargs = {"role": "assistant"}
+        if renderer_model.startswith("thinkingmachines/Inkling"):
+            prompt_kwargs["effort"] = args.effort
+        prompt = renderer.build_generation_prompt(messages, **prompt_kwargs)
         response = await sampling_client.sample_async(
             prompt=prompt,
             num_samples=1,
@@ -1225,7 +1329,8 @@ async def main() -> None:
             ),
         )
         sequence = response.sequences[0] if hasattr(response, "sequences") else response.samples[0]
-        output = tokenizer.decode(sequence.tokens)
+        parsed_message, termination = renderer.parse_response(sequence.tokens)
+        output = get_text_content(parsed_message)
         is_correct = score_output(output, expected, match)
         correct += int(is_correct)
         results.append({
@@ -1234,6 +1339,7 @@ async def main() -> None:
             "match": match,
             "expected": expected,
             "output": output,
+            "termination": getattr(termination, "value", str(termination)),
             "messages": messages,
         })
         print(f"[{index}/{len(rows)}] {'✓' if is_correct else '✗'} expected={expected!r} output={output[:120]!r}")
@@ -1242,6 +1348,7 @@ async def main() -> None:
         "target": target_name,
         "renderer_model": renderer_model,
         "renderer": renderer_name,
+        "effort": args.effort if renderer_model.startswith("thinkingmachines/Inkling") else None,
         "data": args.data,
         "num_examples": len(rows),
         "num_correct": correct,
@@ -1264,6 +1371,7 @@ type EvalSummary = {
   target?: string;
   renderer_model?: string;
   renderer?: string;
+  effort?: number | null;
   data?: string;
   num_examples?: number;
   num_correct?: number;
@@ -1285,6 +1393,7 @@ function formatEvalSummary(filePath: string): string {
     `- File: \`${filePath}\``,
     `- Target: \`${result.target ?? "unknown"}\``,
     `- Renderer: \`${result.renderer ?? "unknown"}\`${result.renderer_model ? ` for \`${result.renderer_model}\`` : ""}`,
+    result.effort !== null && result.effort !== undefined ? `- Inkling effort: ${result.effort}` : "",
     `- Accuracy: ${accuracy} (${correct}/${examples})`,
     failures.length ? `\n## Sample failures\n${failures.map((f) => `### #${f.index}\n- Expected: ${JSON.stringify(f.expected)}\n- Output: ${JSON.stringify(String(f.output).slice(0, 500))}`).join("\n\n")}` : "\nNo failures recorded.",
   ].join("\n");
@@ -1297,6 +1406,7 @@ function compareEvalSummaries(baselinePath: string, candidatePath: string): stri
   const cAcc = candidate.accuracy ?? 0;
   const delta = cAcc - bAcc;
   const bResults = new Map((baseline.results ?? []).map((r) => [r.index, r]));
+  const effortMismatch = baseline.effort !== null && baseline.effort !== undefined && candidate.effort !== null && candidate.effort !== undefined && baseline.effort !== candidate.effort;
   const wins: string[] = [];
   const regressions: string[] = [];
   for (const r of candidate.results ?? []) {
@@ -1310,6 +1420,7 @@ function compareEvalSummaries(baselinePath: string, candidatePath: string): stri
     `- Baseline: \`${baselinePath}\` — ${(bAcc * 100).toFixed(1)}% (${baseline.num_correct}/${baseline.num_examples})`,
     `- Candidate: \`${candidatePath}\` — ${(cAcc * 100).toFixed(1)}% (${candidate.num_correct}/${candidate.num_examples})`,
     `- Delta: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)} points`,
+    effortMismatch ? `- ⚠️ Effort mismatch: baseline=${baseline.effort}, candidate=${candidate.effort}. Re-run at identical effort before attributing the delta to fine-tuning.` : (baseline.effort !== null && baseline.effort !== undefined ? `- Inkling effort: ${baseline.effort} (matched)` : ""),
     wins.length ? `\n## Wins\n${wins.slice(0, 10).map((x) => `- ${x}`).join("\n")}` : "\n## Wins\nNone recorded.",
     regressions.length ? `\n## Regressions\n${regressions.slice(0, 10).map((x) => `- ${x}`).join("\n")}` : "\n## Regressions\nNone recorded.",
   ].join("\n");
@@ -1433,14 +1544,14 @@ function wizardSteps(cwd: string, state: WizardState): WizardStep[] {
       label: "Data validated",
       done: Boolean(state.validationAt),
       detail: state.validationAt ? new Date(state.validationAt).toLocaleString() : "Need readiness report",
-      nextCommand: dataFile ? `/tinker validate ${rel(cwd, dataFile)} --model ${state.model ?? "Qwen/Qwen3.5-9B-Base"}` : undefined,
+      nextCommand: dataFile ? `/tinker validate ${rel(cwd, dataFile)} --model ${state.model ?? DEFAULT_MODEL}` : undefined,
     },
     {
       key: "baseline",
       label: "Baseline eval run",
       done: Boolean(baseline && existsSync(baseline)),
       detail: baseline ? rel(cwd, baseline) : "Measure base model before training",
-      nextCommand: `/tinker eval baseline --model ${state.model ?? "Qwen/Qwen3.5-9B-Base"} --yes`,
+      nextCommand: `/tinker eval baseline --model ${state.model ?? DEFAULT_MODEL}${isInklingModel(state.model ?? DEFAULT_MODEL) ? " --effort 0.9" : ""} --yes`,
       apiUsage: true,
     },
     {
@@ -1464,7 +1575,7 @@ function wizardSteps(cwd: string, state: WizardState): WizardStep[] {
       label: "Checkpoint eval run",
       done: Boolean(candidate && existsSync(candidate)),
       detail: candidate ? rel(cwd, candidate) : "Evaluate trained checkpoint on same eval set",
-      nextCommand: checkpoint ? `/tinker eval checkpoint ${checkpoint} --model ${state.model ?? "Qwen/Qwen3.5-9B-Base"} --yes` : undefined,
+      nextCommand: checkpoint ? `/tinker eval checkpoint ${checkpoint} --model ${state.model ?? DEFAULT_MODEL}${isInklingModel(state.model ?? DEFAULT_MODEL) ? " --effort 0.9" : ""} --yes` : undefined,
       apiUsage: true,
     },
     {
@@ -1491,7 +1602,7 @@ function renderWizard(cwd: string, state: WizardState): string {
   return [
     `# Fine-tune wizard`,
     `- Progress: ${progress}`,
-    `- Model: \`${state.model ?? "Qwen/Qwen3.5-9B-Base"}\``,
+    `- Model: \`${state.model ?? DEFAULT_MODEL}\``,
     state.dataFile ? `- Training data: \`${rel(cwd, state.dataFile)}\`` : "- Training data: not selected",
     state.metric ? `- Success metric: ${state.metric}` : "- Success metric: not defined",
     "",
@@ -1507,7 +1618,7 @@ function renderWizard(cwd: string, state: WizardState): string {
 
 async function createWizardFiles(cwd: string, state: WizardState, force = false): Promise<string[]> {
   if (!state.dataFile) throw new Error("Wizard has no dataFile. Run `/tinker start data/train.jsonl` first.");
-  const model = state.model ?? "Qwen/Qwen3.5-9B-Base";
+  const model = state.model ?? DEFAULT_MODEL;
   const logPath = state.logPath ?? `logs/sft-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
   const files = [
     { rel: "README.md", content: makeProjectReadme({ model, dataFile: state.dataFile, logPath, successMetric: state.metric ?? "Define before scaling." }) },
@@ -1541,29 +1652,56 @@ export default async function (pi: ExtensionAPI) {
       display: true,
       details: { level, timestamp: Date.now() },
     });
+    if (process.env.PI_TINKER_AGENT_CLI === "1") {
+      process.stdout.write(`# ${title}\n\n${body}\n`);
+    }
   }
 
   function registerTinkerProvider() {
-    if (state.checkpoints.length === 0) {
-      pi.unregisterProvider("tinker");
-      return;
-    }
-    pi.registerProvider("tinker", {
-      name: "Tinker",
-      baseUrl: TINKER_OAI_BASE_URL,
-      apiKey: "$TINKER_API_KEY",
-      authHeader: true,
-      api: "openai-completions",
-      models: state.checkpoints.map((checkpoint) => ({
+    const inklingModels = [
+      {
+        id: INKLING_MODEL,
+        name: "Inkling (Tinker, 64K)",
+        reasoning: true,
+        thinkingLevelMap: inklingThinkingLevels(),
+        input: ["text", "image"] as ("text" | "image")[],
+        cost: { input: 1.87, output: 4.68, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 65_536,
+        maxTokens: 16_384,
+        compat: inklingCompat(),
+      },
+      {
+        id: INKLING_256K_MODEL,
+        name: "Inkling (Tinker, 256K)",
+        reasoning: true,
+        thinkingLevelMap: inklingThinkingLevels(),
+        input: ["text", "image"] as ("text" | "image")[],
+        cost: { input: 3.74, output: 9.36, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 262_144,
+        maxTokens: 16_384,
+        compat: inklingCompat(),
+      },
+    ];
+    const checkpointModels = state.checkpoints.map((checkpoint) => {
+      const inkling = checkpoint.reasoning ?? isInklingModel(checkpoint.baseModel);
+      return {
         id: checkpoint.id,
         name: checkpoint.name,
-        reasoning: false,
-        input: ["text"],
+        reasoning: inkling,
+        ...(inkling ? { thinkingLevelMap: inklingThinkingLevels() } : {}),
+        input: (checkpoint.vision ?? inkling ? ["text", "image"] : ["text"]) as ("text" | "image")[],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: checkpoint.contextWindow,
         maxTokens: checkpoint.maxTokens,
-        compat: { supportsDeveloperRole: false, maxTokensField: "max_tokens" },
-      })),
+        ...(inkling ? { compat: inklingCompat() } : {}),
+      };
+    });
+    pi.registerProvider("tinker", {
+      name: "Tinker",
+      baseUrl: TINKER_ANTHROPIC_BASE_URL,
+      apiKey: "$TINKER_API_KEY",
+      api: "anthropic-messages",
+      models: [...inklingModels, ...checkpointModels],
     });
   }
 
@@ -1583,7 +1721,7 @@ export default async function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("tinker", {
-    description: "Tinker fine-tuning helper: improve, deploy, new, prepare, recommend, doctor, validate, eval, smoke, monitor, checkpoints, use",
+    description: "Tinker + Inkling helper: chat, sweep effort, fine-tune, evaluate, monitor, and use checkpoints",
     handler: async (args, ctx) => {
       const [subcommandRaw, ...rest] = shellSplit(args);
       const subcommand = subcommandRaw ?? "help";
@@ -1591,6 +1729,8 @@ export default async function (pi: ExtensionAPI) {
       if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
         sendReport("Tinker helper", [
           "Commands:",
+          "- `/tinker inkling` — Inkling setup, Pi model, and fine-tuning guidance.",
+          "- `/tinker inkling sweep --prompt ... --efforts low,medium,high,xhigh --yes` — compare reasoning effort.",
           "- `/tinker improve data.csv --goal ... --budget demo|smoke|small|real` — managed fine-tuning loop from data to report.",
           "- `/tinker deploy <checkpoint-or-alias>` — generate app/client snippets for a trained checkpoint.",
           "- `/tinker demo` — zero-data customer-support demo project.",
@@ -1604,14 +1744,14 @@ export default async function (pi: ExtensionAPI) {
           "- `/tinker reset` — reset wizard state for this project.",
           "- `/tinker setup` — check API key, Python, uv/pip, Tinker SDK.",
           "- `/tinker init` — guided SFT project scaffold (or `/tinker init data/train.jsonl`).",
-          "- `/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base` — JSONL + renderer/token-mask validation.",
-          "- `/tinker eval init|baseline|checkpoint|compare` — create and run simple evals before/after training.",
-          "- `/tinker sft data/train.jsonl --model Qwen/Qwen3.5-9B-Base --steps 20` — scaffold editable SFT files.",
+          "- `/tinker validate data/train.jsonl --model thinkingmachines/Inkling` — JSONL + TMLv0 renderer/token-mask validation.",
+          "- `/tinker eval init|baseline|checkpoint|compare` — create and run effort-matched evals before/after training.",
+          "- `/tinker sft data/train.jsonl --model thinkingmachines/Inkling --steps 20` — scaffold editable Inkling SFT files.",
           "- `/tinker smoke [train_sft.py]` — run a 2-step smoke test and summarize logs.",
           "- `/tinker monitor <log_dir>` — pin a live metrics widget above the editor.",
           "- `/tinker checkpoints <log_dir>` — list/pick sampler checkpoints and register them as Pi models.",
           "- `/tinker status [log_dir]` — show `tinker run list` and latest metrics if present.",
-          "- `/tinker use tinker://.../sampler_weights/... [alias]` — register checkpoint as a Pi model via Tinker OpenAI-compatible inference.",
+          "- `/tinker use tinker://.../sampler_weights/... [alias] --base-model thinkingmachines/Inkling` — register a checkpoint through Tinker's Anthropic-compatible inference.",
           "- `/tinker use --list` — list registered checkpoint models.",
           "- `/skill:tinker-research ...` — load the Tinker research workflow.",
           "- `/skill:tinker-debug ...` — load Tinker debugging triage.",
@@ -1619,6 +1759,92 @@ export default async function (pi: ExtensionAPI) {
         return;
       }
 
+      if (subcommand === "inkling") {
+        const [actionRaw, ...inklingRest] = rest;
+        const action = actionRaw ?? "info";
+        const { positional, options } = parseOptions(inklingRest);
+
+        if (action === "info" || action === "help" || action === "--help") {
+          sendReport("Inkling on Tinker", [
+            `Inkling is registered as \`tinker/${INKLING_MODEL}\` and can be selected with \`/model\`.`,
+            "",
+            "- 975B total / 41B active MoE; text + image input in Pi (audio is available through native Tinker scripts).",
+            "- Pi thinking levels map to Inkling effort: low=0.2, medium=0.7, high=0.9, xhigh=0.99.",
+            "- Tinker context: 64K by default; a 256K model entry is also registered.",
+            "- Fine-tuning model id: `thinkingmachines/Inkling`.",
+            "",
+            "## Install Inkling support",
+            "```bash",
+            "uv pip install -U 'tinker-cookbook[inkling]'",
+            "```",
+            "Requires Python 3.11+, Tinker SDK 0.23+, and `tml-renderers` (the extra installs compatible versions).",
+            "",
+            "## Recommended first steps",
+            "```text",
+            "/tinker inkling sweep --prompt \"A representative task from my eval\" --efforts low,medium,high,xhigh --yes",
+            "/tinker new data/train.jsonl --model thinkingmachines/Inkling --goal \"what should improve\"",
+            "/tinker validate data/train.jsonl --model thinkingmachines/Inkling",
+            "```",
+            "",
+            "Inkling's generic Cookbook SFT path renders at the default training effort (0.9/high). Sweep inference effort before training and keep baseline/checkpoint eval effort identical.",
+          ].join("\n"));
+          return;
+        }
+
+        if (action === "sweep" || action === "sample") {
+          const prompt = String(options.prompt ?? positional.join(" ")).trim();
+          if (!prompt) {
+            sendReport("Inkling effort sweep", "Usage: `/tinker inkling sweep --prompt \"your representative task\" --efforts low,medium,high,xhigh --yes`", "warning");
+            return;
+          }
+          let efforts: number[];
+          try {
+            efforts = parseInklingEfforts(options.efforts);
+          } catch (error) {
+            sendReport("Inkling effort sweep", error instanceof Error ? error.message : String(error), "warning");
+            return;
+          }
+          if (!process.env.TINKER_API_KEY) {
+            sendReport("Inkling effort sweep", "`TINKER_API_KEY` is not set. Run `/tinker setup` after exporting the key.", "warning");
+            return;
+          }
+          const confirmed = options.yes === true || (ctx.hasUI ? await ctx.ui.confirm("Run Inkling effort sweep?", `Sampling ${efforts.length} responses uses the Tinker API.`) : false);
+          if (!confirmed) {
+            sendReport("Inkling effort sweep", "Stopped before API usage. Re-run with `--yes` when ready.", "warning");
+            return;
+          }
+          const pythonArgs = [
+            "-m",
+            "tinker_cookbook.scripts.inkling.sample_reasoning",
+            `prompt=${prompt}`,
+            `efforts=[${efforts.join(",")}]`,
+          ];
+          if (options["max-tokens"]) pythonArgs.push(`max_tokens=${Number(options["max-tokens"])}`);
+          if (options.temperature) pythonArgs.push(`temperature=${Number(options.temperature)}`);
+          try {
+            ctx.ui.setStatus("tinker", "Inkling effort sweep");
+            const { stdout, stderr } = await execFile("python3", pythonArgs, {
+              cwd: ctx.cwd,
+              timeout: Number(options.timeout ?? 1_800_000),
+              maxBuffer: 24 * 1024 * 1024,
+            });
+            sendReport("Inkling effort sweep completed", `\`efforts=${efforts.join(", ")}\`\n\n\`\`\`text\n${`${stdout}\n${stderr}`.trim()}\n\`\`\``, "success");
+          } catch (error: any) {
+            sendReport("Inkling effort sweep failed", [
+              error?.message ?? String(error),
+              error?.stdout ? `\n## stdout\n\`\`\`text\n${String(error.stdout).split(/\n/).slice(-100).join("\n")}\n\`\`\`` : "",
+              error?.stderr ? `\n## stderr\n\`\`\`text\n${String(error.stderr).split(/\n/).slice(-100).join("\n")}\n\`\`\`` : "",
+              "\nInstall/upgrade with `uv pip install -U 'tinker-cookbook[inkling]'`.",
+            ].filter(Boolean).join("\n"), "error");
+          } finally {
+            ctx.ui.setStatus("tinker", undefined);
+          }
+          return;
+        }
+
+        sendReport("Inkling", `Unknown action: ${action}. Use \`/tinker inkling\` or \`/tinker inkling sweep ...\`.`, "warning");
+        return;
+      }
 
       if (subcommand === "new" || subcommand === "finetune" || subcommand === "demo") {
         const { positional, options } = parseOptions(rest);
@@ -1693,14 +1919,14 @@ export default async function (pi: ExtensionAPI) {
 
         if (ctx.hasUI && !model) {
           const choice = await ctx.ui.select("Pick a starter model", [
-            "Qwen/Qwen3.5-9B-Base — best default for first SFT",
-            "Qwen/Qwen3.5-35B-A3B-Base — stronger MoE",
-            "meta-llama/Llama-3.2-1B — cheapest smoke tests",
+            `${INKLING_MODEL} — Thinking Machines' multimodal open-weights model`,
+            "Qwen/Qwen3.5-9B-Base — cheaper small base model",
+            "Qwen/Qwen3.5-35B-A3B-Base — stronger Qwen MoE base",
             "custom",
           ]);
-          model = choice === "custom" ? ((await ctx.ui.input("Tinker model id", "Qwen/Qwen3.5-9B-Base"))?.trim() || "Qwen/Qwen3.5-9B-Base") : (choice?.split(" — ")[0] || "Qwen/Qwen3.5-9B-Base");
+          model = choice === "custom" ? ((await ctx.ui.input("Tinker model id", DEFAULT_MODEL))?.trim() || DEFAULT_MODEL) : (choice?.split(" — ")[0] || DEFAULT_MODEL);
         }
-        model = model || "Qwen/Qwen3.5-9B-Base";
+        model = model || DEFAULT_MODEL;
 
         if (ctx.hasUI && !metric) {
           metric = (await ctx.ui.input("What should improve?", "e.g. support answer quality, extraction accuracy, concise writing"))?.trim() ?? "";
@@ -1830,7 +2056,7 @@ export default async function (pi: ExtensionAPI) {
 
         const force = options.force === true;
         const yes = options.yes === true;
-        const model = String(options.model ?? "Qwen/Qwen3.5-9B-Base");
+        const model = String(options.model ?? DEFAULT_MODEL);
         const metric = String(options.goal ?? options.metric ?? "Improve task quality on held-out examples.");
         const steps = budgetMaxSteps(budget, options.steps ?? options.max_steps);
         const existingWizard = await readWizardState(ctx.cwd);
@@ -1908,6 +2134,7 @@ export default async function (pi: ExtensionAPI) {
 
           const script = path.resolve(ctx.cwd, "eval.py");
           const evalData = path.resolve(ctx.cwd, "data", "eval.jsonl");
+          const evalEffort = String(options.effort ?? 0.9);
           if (!existsSync(script) || !existsSync(evalData)) {
             sendReport("Tinker improve", "Missing `eval.py` or `data/eval.jsonl`. Run `/tinker eval init`, edit eval rows, then re-run improve.", "warning");
             return;
@@ -1915,8 +2142,17 @@ export default async function (pi: ExtensionAPI) {
 
           ctx.ui.setStatus("tinker", "managed improve: baseline eval");
           const baselineOut = path.resolve(ctx.cwd, String(options["baseline-out"] ?? "eval_results/baseline.json"));
-          if (!existsSync(baselineOut) || force) {
-            const { stdout, stderr } = await execFile("python3", [script, "--base-model", stateForRun.model ?? model, "--data", evalData, "--out", baselineOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
+          let baselineNeedsRun = !existsSync(baselineOut) || force;
+          if (!baselineNeedsRun && isInklingModel(stateForRun.model)) {
+            try {
+              baselineNeedsRun = readEvalSummary(baselineOut).effort !== Number(evalEffort);
+              if (baselineNeedsRun) sections.push(`## Baseline invalidated\nExisting baseline used a different or unknown Inkling effort; re-running at effort ${evalEffort}.`);
+            } catch {
+              baselineNeedsRun = true;
+            }
+          }
+          if (baselineNeedsRun) {
+            const { stdout, stderr } = await execFile("python3", [script, "--base-model", stateForRun.model ?? model, "--effort", evalEffort, "--data", evalData, "--out", baselineOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
             sections.push(`## Baseline eval\n${formatEvalSummary(baselineOut)}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${stdout}\n${stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
             await patchWizardState(ctx.cwd, { baselineResult: baselineOut, model: stateForRun.model });
           } else {
@@ -1947,14 +2183,14 @@ export default async function (pi: ExtensionAPI) {
           if (checkpoint) {
             ctx.ui.setStatus("tinker", "managed improve: checkpoint eval");
             const candidateOut = path.resolve(ctx.cwd, String(options["candidate-out"] ?? `eval_results/${sanitizeName(path.basename(trainLog))}.json`));
-            const evalRun = await execFile("python3", [script, "--model-path", checkpoint, "--renderer-model", stateForRun.model ?? model, "--data", evalData, "--out", candidateOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
+            const evalRun = await execFile("python3", [script, "--model-path", checkpoint, "--renderer-model", stateForRun.model ?? model, "--effort", evalEffort, "--data", evalData, "--out", candidateOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
             sections.push(`## Checkpoint eval\n${formatEvalSummary(candidateOut)}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${evalRun.stdout}\n${evalRun.stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
             sections.push(compareEvalSummaries(baselineOut, candidateOut));
             sections.push(suggestDataImprovementsFromEval(candidateOut));
             const alias = sanitizeName(String(options.alias ?? `tinker-${path.basename(trainLog)}`));
             if (options.register !== false) {
               state.checkpoints = state.checkpoints.filter((m) => m.id !== checkpoint && m.name !== alias);
-              state.checkpoints.push({ id: checkpoint, name: alias, contextWindow: 32768, maxTokens: 4096, addedAt: Date.now() });
+              state.checkpoints.push(checkpointRegistration({ id: checkpoint, name: alias, baseModel: stateForRun.model }));
               await saveState(state);
               registerTinkerProvider();
               await patchWizardState(ctx.cwd, { checkpointPath: checkpoint, candidateResult: candidateOut, registeredModel: alias });
@@ -2029,7 +2265,7 @@ export default async function (pi: ExtensionAPI) {
           dataFileInput = (await ctx.ui.input("Where is your training JSONL?", "data/train.jsonl"))?.trim() ?? "";
         }
         if (!dataFileInput) {
-          sendReport("Fine-tune wizard", "Usage: `/tinker start data/train.jsonl --model Qwen/Qwen3.5-9B-Base --metric 'what should improve'`", "warning");
+          sendReport("Fine-tune wizard", "Usage: `/tinker start data/train.jsonl --model thinkingmachines/Inkling --metric 'what should improve'`", "warning");
           return;
         }
         const dataFile = path.resolve(ctx.cwd, dataFileInput);
@@ -2040,14 +2276,14 @@ export default async function (pi: ExtensionAPI) {
 
         if (ctx.hasUI && !model) {
           const choice = await ctx.ui.select("Pick a starter model", [
-            "Qwen/Qwen3.5-9B-Base — good small default",
-            "Qwen/Qwen3.5-35B-A3B-Base — stronger MoE",
-            "meta-llama/Llama-3.2-1B — cheapest smoke tests",
+            `${INKLING_MODEL} — Thinking Machines' multimodal open-weights model`,
+            "Qwen/Qwen3.5-9B-Base — cheaper small base model",
+            "Qwen/Qwen3.5-35B-A3B-Base — stronger Qwen MoE base",
             "custom",
           ]);
-          model = choice === "custom" ? ((await ctx.ui.input("Tinker model id", "Qwen/Qwen3.5-9B-Base"))?.trim() || "Qwen/Qwen3.5-9B-Base") : (choice?.split(" — ")[0] || "Qwen/Qwen3.5-9B-Base");
+          model = choice === "custom" ? ((await ctx.ui.input("Tinker model id", DEFAULT_MODEL))?.trim() || DEFAULT_MODEL) : (choice?.split(" — ")[0] || DEFAULT_MODEL);
         }
-        model = model || "Qwen/Qwen3.5-9B-Base";
+        model = model || DEFAULT_MODEL;
 
         if (ctx.hasUI && !metric) {
           metric = (await ctx.ui.input("What should the model get better at?", "e.g. support answers, concise rewrites, JSON extraction accuracy"))?.trim() ?? "";
@@ -2109,19 +2345,32 @@ export default async function (pi: ExtensionAPI) {
         const checks: string[] = [];
         checks.push(process.env.TINKER_API_KEY ? "✅ `TINKER_API_KEY` is set." : "❌ `TINKER_API_KEY` is not set. Get one from https://tinker-console.thinkingmachines.ai and export it.");
         checks.push((await commandExists("python3")) ? "✅ `python3` found." : "❌ `python3` not found.");
+        try {
+          const { stdout } = await execFile("python3", ["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"], { timeout: 20_000 });
+          const [major, minor] = stdout.trim().split(".").map(Number);
+          checks.push(major > 3 || (major === 3 && minor >= 11) ? `✅ Python ${stdout.trim()} supports Inkling.` : `❌ Inkling requires Python 3.11+ (found ${stdout.trim()}).`);
+        } catch {}
         checks.push((await commandExists("uv")) ? "✅ `uv` found." : "⚠️ `uv` not found. You can still use pip, but uv is recommended.");
         checks.push((await commandExists("tinker")) ? "✅ `tinker` CLI found." : "⚠️ `tinker` CLI not found on PATH.");
         try {
-          const { stdout, stderr } = await execFile("python3", ["-c", "import tinker; print(getattr(tinker, '__version__', 'unknown'))"], { timeout: 20_000 });
-          checks.push(`✅ Python can import \`tinker\` (${stdout.trim() || stderr.trim()}).`);
+          const { stdout, stderr } = await execFile("python3", ["-c", "import importlib.metadata as m; print(m.version('tinker'))"], { timeout: 20_000 });
+          const version = stdout.trim() || stderr.trim();
+          const [major, minor] = version.split(".").map(Number);
+          checks.push(major > 0 || minor >= 23 ? `✅ Tinker SDK ${version} supports Inkling.` : `❌ Inkling requires Tinker SDK 0.23+ (found ${version}).`);
         } catch {
-          checks.push("⚠️ Python cannot import `tinker`. Install with: `uv pip install tinker-cookbook` (or `python3 -m pip install tinker-cookbook`).");
+          checks.push("⚠️ Python cannot import `tinker`. Install with: `uv pip install -U 'tinker-cookbook[inkling]'`.");
         }
         try {
           const { stdout } = await execFile("python3", ["-c", "import tinker_cookbook; print('ok')"], { timeout: 20_000 });
           checks.push(`✅ Python can import \`tinker_cookbook\` (${stdout.trim()}).`);
         } catch {
-          checks.push("⚠️ Python cannot import `tinker_cookbook`. Install with: `uv pip install tinker-cookbook`.");
+          checks.push("⚠️ Python cannot import `tinker_cookbook`. Install with: `uv pip install -U 'tinker-cookbook[inkling]'`.");
+        }
+        try {
+          await execFile("python3", ["-c", "import tml_renderers; print('ok')"], { timeout: 20_000 });
+          checks.push("✅ Python can import `tml_renderers` for Inkling.");
+        } catch {
+          checks.push("⚠️ Python cannot import `tml_renderers`. Install with: `uv pip install -U 'tinker-cookbook[inkling]'` (Python 3.11+ required).");
         }
         sendReport("Tinker setup check", checks.join("\n"));
         return;
@@ -2131,11 +2380,11 @@ export default async function (pi: ExtensionAPI) {
         const { positional, options } = parseOptions(rest);
         const file = positional[0];
         if (!file) {
-          sendReport("Tinker validate", "Usage: `/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base`", "warning");
+          sendReport("Tinker validate", "Usage: `/tinker validate data/train.jsonl --model thinkingmachines/Inkling`", "warning");
           return;
         }
         const dataFile = path.resolve(ctx.cwd, file);
-        const model = String(options.model ?? "Qwen/Qwen3.5-9B-Base");
+        const model = String(options.model ?? DEFAULT_MODEL);
         const maxExamples = Number(options.examples ?? 200);
         const maxLength = Number(options["max-length"] ?? 32768);
         const lightweight = validateDataset(dataFile);
@@ -2162,8 +2411,8 @@ export default async function (pi: ExtensionAPI) {
           sendReport("Tinker eval", [
             "Commands:",
             "- `/tinker eval init` — create `eval.py` and `data/eval.jsonl`.",
-            "- `/tinker eval baseline --model Qwen/Qwen3.5-9B-Base` — evaluate the base model.",
-            "- `/tinker eval checkpoint tinker://... --model Qwen/Qwen3.5-9B-Base` — evaluate a sampler checkpoint.",
+            "- `/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9` — evaluate base Inkling.",
+            "- `/tinker eval checkpoint tinker://... --model thinkingmachines/Inkling --effort 0.9` — evaluate a sampler checkpoint at the same effort.",
             "- `/tinker eval compare eval_results/baseline.json eval_results/checkpoint.json` — compare results.",
           ].join("\n"));
           return;
@@ -2191,8 +2440,8 @@ export default async function (pi: ExtensionAPI) {
             "",
             "Edit `data/eval.jsonl`, then run:",
             "```text",
-            "/tinker eval baseline --model Qwen/Qwen3.5-9B-Base --yes",
-            "/tinker eval checkpoint tinker://.../sampler_weights/... --model Qwen/Qwen3.5-9B-Base --yes",
+            "/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9 --yes",
+            "/tinker eval checkpoint tinker://.../sampler_weights/... --model thinkingmachines/Inkling --effort 0.9 --yes",
             "/tinker eval compare eval_results/baseline.json eval_results/checkpoint.json",
             "```",
           ].join("\n"), "success");
@@ -2205,7 +2454,7 @@ export default async function (pi: ExtensionAPI) {
             sendReport("Tinker eval", `Missing \`${script}\`. Run \`/tinker eval init\` first.`, "warning");
             return;
           }
-          const model = String(options.model ?? options["base-model"] ?? "Qwen/Qwen3.5-9B-Base");
+          const model = String(options.model ?? options["base-model"] ?? DEFAULT_MODEL);
           const data = path.resolve(ctx.cwd, String(options.data ?? "data/eval.jsonl"));
           if (!existsSync(data)) {
             sendReport("Tinker eval", `Eval data not found: ${data}`, "error");
@@ -2213,7 +2462,7 @@ export default async function (pi: ExtensionAPI) {
           }
           const checkpoint = action === "checkpoint" ? positional[0] : undefined;
           if (action === "checkpoint" && !checkpoint) {
-            sendReport("Tinker eval checkpoint", "Usage: `/tinker eval checkpoint tinker://.../sampler_weights/... --model Qwen/Qwen3.5-9B-Base`", "warning");
+            sendReport("Tinker eval checkpoint", "Usage: `/tinker eval checkpoint tinker://.../sampler_weights/... --model thinkingmachines/Inkling --effort 0.9`", "warning");
             return;
           }
           const out = path.resolve(ctx.cwd, String(options.out ?? (action === "baseline" ? "eval_results/baseline.json" : `eval_results/${String(checkpoint).split("/").slice(-1)[0] || "checkpoint"}.json`)));
@@ -2228,6 +2477,7 @@ export default async function (pi: ExtensionAPI) {
           if (options.limit) argsForPython.push("--limit", String(options.limit));
           if (options["max-tokens"]) argsForPython.push("--max-tokens", String(options["max-tokens"]));
           if (options.temperature) argsForPython.push("--temperature", String(options.temperature));
+          if (options.effort) argsForPython.push("--effort", String(options.effort));
           try {
             ctx.ui.setStatus("tinker", `Tinker eval: ${action}`);
             const { stdout, stderr } = await execFile("python3", argsForPython, {
@@ -2281,19 +2531,19 @@ export default async function (pi: ExtensionAPI) {
         }
         if (ctx.hasUI && !model) {
           const modelChoice = await ctx.ui.select("Choose a starting model", [
-            "Qwen/Qwen3.5-9B-Base — small/base/good default",
-            "Qwen/Qwen3.5-35B-A3B-Base — stronger MoE base",
-            "meta-llama/Llama-3.2-1B — cheapest smoke tests",
+            `${INKLING_MODEL} — Thinking Machines' multimodal open-weights model`,
+            "Qwen/Qwen3.5-9B-Base — cheaper small base model",
+            "Qwen/Qwen3.5-35B-A3B-Base — stronger Qwen MoE base",
             "custom",
           ]);
-          if (modelChoice === "custom") model = (await ctx.ui.input("Tinker model id", "Qwen/Qwen3.5-9B-Base"))?.trim() || "Qwen/Qwen3.5-9B-Base";
-          else model = modelChoice?.split(" — ")[0] || "Qwen/Qwen3.5-9B-Base";
+          if (modelChoice === "custom") model = (await ctx.ui.input("Tinker model id", DEFAULT_MODEL))?.trim() || DEFAULT_MODEL;
+          else model = modelChoice?.split(" — ")[0] || DEFAULT_MODEL;
         }
         if (ctx.hasUI && !successMetric) {
           successMetric = (await ctx.ui.input("What should improve?", "e.g. held-out exact match, support response quality, benchmark score"))?.trim() || "Define before scaling beyond a smoke test.";
         }
         if (!dataFileArg) {
-          sendReport("Tinker init", "Usage: `/tinker init data/train.jsonl --model Qwen/Qwen3.5-9B-Base --metric 'held-out accuracy'`", "warning");
+          sendReport("Tinker init", "Usage: `/tinker init data/train.jsonl --model thinkingmachines/Inkling --metric 'held-out accuracy'`", "warning");
           return;
         }
         const dataFile = path.resolve(ctx.cwd, dataFileArg);
@@ -2301,7 +2551,7 @@ export default async function (pi: ExtensionAPI) {
           sendReport("Tinker init", `Data file not found: ${dataFile}`, "error");
           return;
         }
-        model = model || "Qwen/Qwen3.5-9B-Base";
+        model = model || DEFAULT_MODEL;
         const force = options.force === true;
         const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
         const logPath = String(options.log ?? `logs/sft-${stamp}`);
@@ -2345,7 +2595,7 @@ export default async function (pi: ExtensionAPI) {
         const { positional, options } = parseOptions(rest);
         const dataFileArg = positional[0];
         if (!dataFileArg) {
-          sendReport("Tinker SFT scaffold", "Usage: `/tinker sft data/train.jsonl --model Qwen/Qwen3.5-9B-Base --steps 20`", "warning");
+          sendReport("Tinker SFT scaffold", "Usage: `/tinker sft data/train.jsonl --model thinkingmachines/Inkling --steps 20`", "warning");
           return;
         }
         const dataFile = path.resolve(ctx.cwd, dataFileArg);
@@ -2354,7 +2604,7 @@ export default async function (pi: ExtensionAPI) {
           return;
         }
         const force = options.force === true;
-        const model = String(options.model ?? "Qwen/Qwen3.5-9B-Base");
+        const model = String(options.model ?? DEFAULT_MODEL);
         const maxSteps = String(options.steps ?? options.max_steps ?? "20");
         const batchSize = String(options["batch-size"] ?? "8");
         const learningRate = String(options.lr ?? options["learning-rate"] ?? "2e-4");
@@ -2387,7 +2637,7 @@ export default async function (pi: ExtensionAPI) {
           "",
           "Next commands:",
           "```bash",
-          "uv pip install tinker-cookbook  # if needed",
+          isInklingModel(model) ? "uv pip install -U 'tinker-cookbook[inkling]'" : "uv pip install -U tinker-cookbook",
           "python train_sft.py max_steps=2",
           "# inspect logs, then scale up:",
           `python train_sft.py max_steps=${maxSteps}`,
@@ -2496,7 +2746,8 @@ export default async function (pi: ExtensionAPI) {
             if (record?.sampler_path) {
               const alias = `${path.basename(logDir)}-${record.name ?? "checkpoint"}`.replace(/[^a-zA-Z0-9._-]+/g, "-");
               state.checkpoints = state.checkpoints.filter((m) => m.id !== record.sampler_path && m.name !== alias);
-              state.checkpoints.push({ id: record.sampler_path, name: alias, contextWindow: 32768, maxTokens: 4096, addedAt: Date.now() });
+              const wizard = await readWizardState(ctx.cwd);
+              state.checkpoints.push(checkpointRegistration({ id: record.sampler_path, name: alias, baseModel: wizard?.model }));
               await saveState(state);
               await patchWizardState(ctx.cwd, { checkpointPath: record.sampler_path, registeredModel: alias });
               registerTinkerProvider();
@@ -2554,17 +2805,19 @@ export default async function (pi: ExtensionAPI) {
           return;
         }
         const alias = String(options.alias ?? positional[1] ?? `tinker-${state.checkpoints.length + 1}`);
-        const contextWindow = Number(options.context ?? 32768);
-        const maxTokens = Number(options["max-tokens"] ?? 4096);
+        const baseModel = String(options["base-model"] ?? options.model ?? "") || undefined;
+        const inkling = isInklingModel(baseModel);
+        const contextWindow = Number(options.context ?? (inkling ? 65_536 : 32_768));
+        const maxTokens = Number(options["max-tokens"] ?? (inkling ? 16_384 : 4_096));
         state.checkpoints = state.checkpoints.filter((m) => m.id !== checkpoint && m.name !== alias);
-        state.checkpoints.push({ id: checkpoint, name: alias, contextWindow, maxTokens, addedAt: Date.now() });
+        state.checkpoints.push(checkpointRegistration({ id: checkpoint, name: alias, baseModel, contextWindow, maxTokens }));
         await saveState(state);
         await patchWizardState(ctx.cwd, { checkpointPath: checkpoint, registeredModel: alias });
         registerTinkerProvider();
         sendReport("Tinker checkpoint registered", [
           `Registered \`${alias}\` as provider/model \`tinker/${checkpoint}\`.`,
           "",
-          "Use `/model` to select it. This uses Tinker's beta OpenAI-compatible inference endpoint, best for quick inspection rather than production serving.",
+          "Use `/model` to select it. Pi uses Tinker's beta Anthropic-compatible endpoint for tool use, image input, streaming thinking, and Inkling effort controls; it is still intended for testing rather than production serving.",
           "",
           `Saved registrations in \`${STATE_PATH}\`.`,
         ].join("\n"), "success");

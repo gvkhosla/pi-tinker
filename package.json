@@ -1,7 +1,7 @@
 {
   "name": "pi-tinker",
-  "version": "0.7.0",
-  "description": "Pi package for making Tinker fine-tuning easier: managed improvement loops, data prep, validation, evals, SFT scaffolding, deploy snippets, and checkpoint chat.",
+  "version": "0.8.0",
+  "description": "Run and fine-tune Inkling and other open-weight models with Tinker from Pi: effort sweeps, evals, SFT scaffolding, and checkpoint chat.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/gvkhosla/pi-tinker#readme",
   "repository": {
@@ -19,9 +19,16 @@
     "llm",
     "sft",
     "rl",
-    "dpo"
+    "dpo",
+    "inkling",
+    "coding-agent",
+    "claude-code",
+    "cursor"
   ],
   "type": "module",
+  "bin": {
+    "pi-tinker-agent": "./scripts/agent-cli.mjs"
+  },
   "files": [
     "extensions/",
     "skills/",
@@ -30,6 +37,8 @@
     "scripts/",
     "README.md",
     "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
     "LICENSE",
     "NOTICE",
     "CHANGELOG.md"

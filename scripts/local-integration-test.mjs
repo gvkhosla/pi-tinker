@@ -40,10 +40,16 @@ async function main() {
   try {
     await copyFile(path.join(repo, "examples", "conversations.jsonl"), path.join(tmp, "train.jsonl"));
 
-    // Extension loads without crashing.
-    pi(["--list-models"], { cwd: tmp });
+    // Extension loads without crashing and registers base Inkling even before checkpoints exist.
+    const baseModels = pi(["--list-models"], { cwd: tmp });
+    assert(baseModels.includes("thinkingmachines/Inkling"), "base Inkling model was not registered");
+
+    // The tool-agnostic coding-agent adapter should invoke the same extension.
+    const agentOutput = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "inkling"], { cwd: tmp });
+    assert(agentOutput.includes("Inkling on Tinker"), "coding-agent adapter did not print the Tinker report");
 
     // Basic commands should execute without crashing.
+    pi(["-p", "/tinker inkling"], { cwd: tmp });
     pi(["-p", "/tinker setup"], { cwd: tmp });
     pi(["-p", "/tinker validate train.jsonl --quick"], { cwd: tmp });
     pi(["-p", "/tinker validate train.jsonl --model Qwen/Qwen3.5-9B-Base --examples 1"], { cwd: tmp });
@@ -92,6 +98,7 @@ async function main() {
     const readme = readFileSync(path.join(tmp, "README.md"), "utf8");
     assert(readme.includes("/tinker monitor"), "generated README missing monitor instructions");
     assert(readFileSync(path.join(tmp, "tinker.yaml"), "utf8").includes("success_metric: quality"), "tinker.yaml missing success metric");
+    assert(readFileSync(path.join(tmp, "train_sft.py"), "utf8").includes("thinkingmachines/Inkling"), "generated SFT script did not default to Inkling");
 
     // /tinker sft should refuse to clobber unless --force, then regenerate.
     pi(["-p", "/tinker sft train.jsonl --force --steps 3"], { cwd: tmp });
@@ -116,10 +123,11 @@ async function main() {
     pi(["-p", "/tinker eval compare eval_results/baseline.json eval_results/candidate.json"], { cwd: tmp });
 
     // /tinker use should register a checkpoint model in Pi's model registry.
-    pi(["-p", "/tinker use tinker://pi-tinker-test/sampler_weights/000001 pi-tinker-test"], { cwd: tmp });
+    pi(["-p", "/tinker use tinker://pi-tinker-test/sampler_weights/000001 pi-tinker-test --base-model thinkingmachines/Inkling"], { cwd: tmp });
     assert(existsSync(statePath), "/tinker use did not create checkpoint state file");
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     assert(state.checkpoints?.some((m) => m.name === "pi-tinker-test"), "/tinker use did not persist checkpoint model");
+    assert(state.checkpoints?.find((m) => m.name === "pi-tinker-test")?.baseModel === "thinkingmachines/Inkling", "/tinker use did not persist Inkling checkpoint capabilities");
 
     const models = run("bash", ["-lc", `pi --no-extensions -e '${repo}' --list-models pi-tinker-test 2>&1`], { cwd: tmp });
     assert(models.includes("tinker://pi-tinker-test/sampler_weights/000001") || models.includes("pi-tinker-test"), "registered Tinker model did not appear in --list-models output");

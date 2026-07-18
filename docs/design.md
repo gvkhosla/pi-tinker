@@ -12,6 +12,8 @@ Adding another framework inside Pi would make the user experience worse. Pi shou
 
 `pi-tinker` handles:
 
+- direct Inkling registration through Tinker's Anthropic-compatible endpoint,
+- effort mapping and representative-task sweeps for Inkling,
 - discovery: skills that tell Pi when and how to use Tinker,
 - a beginner step-by-step wizard (`/tinker start`, `/tinker next`, `/tinker reset`),
 - setup checks,
@@ -44,13 +46,15 @@ Tinker/Tinker Cookbook handle:
 ## Ideal user flow
 
 ```text
-/tinker start data/train.jsonl
+/tinker inkling
+/tinker inkling sweep --prompt "representative task" --efforts low,medium,high,xhigh --yes
+/tinker start data/train.jsonl --model thinkingmachines/Inkling
 /tinker next
 /tinker setup
-/tinker init data/train.jsonl
-/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
+/tinker init data/train.jsonl --model thinkingmachines/Inkling
+/tinker validate data/train.jsonl --model thinkingmachines/Inkling
 /tinker eval init
-/tinker eval baseline --model Qwen/Qwen3.5-9B-Base
+/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9
 /skill:tinker-research plan my eval before scaling
 /tinker smoke train_sft.py
 /tinker monitor logs/run

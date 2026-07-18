@@ -40,7 +40,7 @@ Real training requires `TINKER_API_KEY` and `tinker-cookbook` installed. The rec
 
 ```text
 /tinker doctor
-/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
-/tinker eval baseline --model Qwen/Qwen3.5-9B-Base --yes
+/tinker validate data/train.jsonl --model thinkingmachines/Inkling
+/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9 --yes
 /tinker smoke train_sft.py --yes
 ```

@@ -1,13 +1,13 @@
 ---
 name: tinker-debug
-description: Diagnose training issues with Tinker inside Pi — slow steps, hanging sessions, output mismatches, error messages, renderer problems, and deployment issues. Use this skill whenever a user reports that training is slow, steps take too long, sessions are hanging, model outputs differ between Tinker and external engines (vLLM, SGLang), they get a confusing error message, training quality is poor (high KL, bad outputs), or they suspect something is wrong. Also trigger when users ask "is this a Tinker issue or my issue?", "is Tinker down?", report unexpected wait times, see output quality regressions, get opaque errors, or want to profile/debug their training or deployment pipeline. This skill walks through systematic triage to determine root cause.
+description: Diagnose training issues with Tinker in Pi or another coding-agent shell — slow steps, hanging sessions, output mismatches, error messages, renderer problems, and deployment issues. Use this skill whenever a user reports that training is slow, steps take too long, sessions are hanging, model outputs differ between Tinker and external engines (vLLM, SGLang), they get a confusing error message, training quality is poor (high KL, bad outputs), or they suspect something is wrong. Also trigger when users ask "is this a Tinker issue or my issue?", "is Tinker down?", report unexpected wait times, see output quality regressions, get opaque errors, or want to profile/debug their training or deployment pipeline. This skill walks through systematic triage to determine root cause.
 ---
 
 # Tinker Debug
 
-## Pi-specific notes
+## Agent/runtime notes
 
-This skill is adapted for Pi. Use Pi's available tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) for diagnostics. If a referenced Claude-only tool is unavailable, use shell equivalents or ask the user for the missing artifact.
+Pi is the primary interface. Use Pi's tools and `/tinker doctor` when available. In Claude Code, Codex, Cursor, Copilot, Gemini CLI, or another shell-capable agent, read `AGENTS.md` and run `pi-tinker-agent doctor` (or `node scripts/agent-cli.mjs doctor`) before deeper diagnosis. If a referenced tool is unavailable, use shell equivalents or ask for the missing artifact. Generated Python, logs, and JSONL are the inspectable source of truth.
 
 Systematic triage for training and deployment issues. Five triage paths:
 1. **Performance issues** — slow steps, hanging sessions, throughput problems
@@ -15,6 +15,7 @@ Systematic triage for training and deployment issues. Five triage paths:
 3. **Service availability** — "is Tinker down?" quick diagnostics
 4. **Renderer issues** — wrong tokens, training quality degradation, prompt mismatches
 5. **Error message decoder** — mapping opaque errors to root causes
+6. **Inkling compatibility** — Python/SDK/renderer versions, effort mismatch, and compatible-endpoint behavior
 
 Identify which category the user's problem falls into, then follow the appropriate triage.
 
@@ -81,6 +82,17 @@ except ImportError: pass
 - `transformers == 5.3.0`: Incorrect `tokenizer_class` for DeepSeek V2/V3 models (huggingface/transformers#44801, fixed in 5.3.1). Causes tokenizer loading failures. Upgrade or skip this version.
 - `transformers < 5.0`: Bug in `Qwen2VLImageProcessor` that miscounts image tokens for VL models. Fix: upgrade to `>=5.0`.
 - Always check if the user is on the **latest stable** tinker SDK. Suggest `pip install --upgrade tinker`.
+- **Inkling requires Python 3.11+, Tinker SDK 0.23+, and `tml-renderers`.** Install compatible versions together with `uv pip install -U 'tinker-cookbook[inkling]'`.
+
+### Inkling quick triage
+
+1. Confirm the exact model id is `thinkingmachines/Inkling` (or the documented Tinker 256K variant for inference).
+2. Run `/tinker doctor`, or `pi-tinker-agent doctor` from another coding agent.
+3. Confirm `model_info.get_recommended_renderer_name(model)` resolves to Inkling's TMLv0 renderer; never substitute a Qwen renderer.
+4. Check that effort is a float in `[0, 1)`. Generic Cookbook SFT defaults to `0.9` (high).
+5. Reject before/after conclusions if baseline and checkpoint were sampled at different effort.
+6. For Pi chat, use Tinker's Anthropic-compatible endpoint. Empty thinking signatures are valid; eager tool-input streaming must remain disabled.
+7. Distinguish Pi message support (text/images) from Inkling's broader native Tinker multimodality, including audio.
 
 If the user has a beta or pre-release of any core dependency, that's the likely culprit. Suggest downgrading before deeper investigation.
 

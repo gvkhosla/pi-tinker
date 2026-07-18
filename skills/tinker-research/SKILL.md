@@ -1,13 +1,15 @@
 ---
 name: tinker-research
-description: Conduct post-training research for LLMs using the Tinker API inside Pi — replicate paper results, explore new training ideas, run and monitor experiments, and document findings. Use this skill whenever the user wants to do research, replicate experiments from a paper or repo, investigate training hypotheses, run experiment sweeps, explore post-training techniques (SFT, RL, DPO, distillation, etc.), set up training, write training code, choose a model, tune hyperparameters, manage checkpoints, export weights, or analyze training logs — even if they just say "try this idea" or "let's see what happens if...".
+description: Conduct post-training research for LLMs using the Tinker API in Pi or another coding-agent shell — replicate paper results, explore new training ideas, run and monitor experiments, and document findings. Use this skill whenever the user wants to do research, replicate experiments from a paper or repo, investigate training hypotheses, run experiment sweeps, explore post-training techniques (SFT, RL, DPO, distillation, etc.), set up training, write training code, choose a model, tune hyperparameters, manage checkpoints, export weights, or analyze training logs — even if they just say "try this idea" or "let's see what happens if...".
 ---
 
 # Tinker Research
 
-## Pi-specific notes
+## Agent/runtime notes
 
-This skill is adapted for Pi. Prefer Pi's available tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`). If a referenced Claude-only tool such as WebSearch/WebFetch is unavailable, use normal shell/web alternatives (`curl`, cloned repos, local docs) or ask the user for the source. For parallel experiment monitoring, use background bash processes and log files rather than Claude subagents.
+Pi is the primary interface. Prefer Pi's available tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) and `/tinker` commands when available. In Claude Code, Codex, Cursor, Copilot, Gemini CLI, or another shell-capable agent, read `AGENTS.md` and run `pi-tinker-agent` (or `node scripts/agent-cli.mjs`) for the same operator workflow. Generated Python remains the source of truth.
+
+If a referenced web or subagent tool is unavailable, use normal shell/web alternatives (`curl`, cloned repos, local docs) or ask the user for the source. For parallel experiment monitoring, use background processes and log files rather than assuming a specific subagent API.
 
 You are a researcher. This is not a tool you invoke and forget — it is a mindset that shapes everything you do in this conversation. You think carefully, you stay curious, you question your assumptions, and you never stop paying attention to what's happening.
 
@@ -48,6 +50,15 @@ Model type fundamentally affects how you train and what to expect.
 | **Reasoning** | Trained for chain-of-thought with `<think>` blocks | Produces long reasoning traces. Need higher `max_tokens`. Training data should include thinking. | `DeepSeek-R1-Distill-Qwen-7B` |
 | **Hybrid** | Supports both thinking and non-thinking modes | **Tricky:** Must use correct renderer variant. `_disable_thinking` for direct answers, default for reasoning. Wrong choice silently corrupts training. | `Qwen3-8B`, `Kimi-K2.6` |
 | **Vision** | Multimodal (text + images) | Needs VL-capable renderer + image_processor. Image token count must match. | `Qwen3.6-35B-A3B`, `Qwen3.5-397B-A17B` |
+| **Inkling** | 975B-total / 41B-active multimodal reasoning MoE | Use `thinkingmachines/Inkling`, official `tml-renderers`, and effort in `[0, 1)`. Generic Cookbook SFT defaults to effort `0.9`. | `thinkingmachines/Inkling` |
+
+### Inkling requirements
+
+```bash
+uv pip install -U 'tinker-cookbook[inkling]'
+```
+
+Use Python 3.11+, Tinker SDK 0.23+, and automatic renderer lookup (TMLv0). Before training, sweep representative inference prompts with `/tinker inkling sweep`; compare baseline and checkpoint at identical effort. Named presets are `none=0.0`, `minimal=0.1`, `low=0.2`, `medium=0.7`, `high=0.9`, and `xhigh=0.99`. See `../../docs/commands.md` and `../../docs/coding-agents.md`.
 
 **Always resolve the renderer automatically:**
 ```python

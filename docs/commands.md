@@ -1,5 +1,24 @@
 # `/tinker` command reference
 
+Pi users run these as `/tinker ...`. Other shell-capable coding agents run the same subcommands with `pi-tinker-agent ...` or `node scripts/agent-cli.mjs ...`; see [`coding-agents.md`](coding-agents.md).
+
+## `/tinker inkling [info|sweep]`
+
+Shows Inkling setup and registers base Inkling in Pi automatically. After setting `TINKER_API_KEY`, select either the 64K or 256K model with `/model`.
+
+```text
+/tinker inkling
+/tinker inkling sweep --prompt "A representative task" --efforts low,medium,high,xhigh --yes
+```
+
+The sweep calls Tinker's official `sample_reasoning` script. Presets map to `low=0.2`, `medium=0.7`, `high=0.9`, and `xhigh=0.99`; raw floats in `[0, 1)` also work. Options: `--max-tokens`, `--temperature`, `--timeout`, and `--yes`.
+
+Install the required renderer stack with:
+
+```bash
+uv pip install -U 'tinker-cookbook[inkling]'
+```
+
 ## `/tinker improve [input] [options]`
 
 Managed fine-tuning operator. This is the highest-level command for people who want Pi to run the safe loop instead of remembering every step.
@@ -40,7 +59,8 @@ Options:
 |---|---:|---|
 | `--goal` / `--metric` | TODO | What should improve |
 | `--budget` | `demo` | `demo`, `smoke`, `small`, or `real` |
-| `--model` | `Qwen/Qwen3.5-9B-Base` | Base model / renderer model |
+| `--model` | `thinkingmachines/Inkling` | Base model / renderer model |
+| `--effort` | `0.9` | Inkling baseline/checkpoint eval effort; both use the same value |
 | `--steps` | budget default | Override scale-up max steps |
 | `--yes` | false | Confirm API-using stages |
 | `--force` | false | Overwrite generated files / rerun baseline |
@@ -104,7 +124,7 @@ Options:
 | Option | Default | Meaning |
 |---|---:|---|
 | `--goal` / `--metric` | prompt/TODO | What should improve |
-| `--model` | `Qwen/Qwen3.5-9B-Base` | Starter model |
+| `--model` | `thinkingmachines/Inkling` | Starter model |
 | `--example` | false | Built-in example slug, e.g. `customer-support` |
 | `--out` | `data/train.jsonl` | Output path when converting data |
 | `--prepare` | false | Force conversion even for JSONL |
@@ -163,7 +183,7 @@ Current examples:
 Beginner step-by-step fine-tuning wizard. This is the simplest entrypoint for people who have examples and want to improve an open model without knowing the Tinker internals.
 
 ```text
-/tinker start data/train.jsonl --model Qwen/Qwen3.5-9B-Base --metric "support answer quality"
+/tinker start data/train.jsonl --model thinkingmachines/Inkling --metric "support answer quality"
 ```
 
 It creates project files, stores progress in `.tinker-pi/state.json`, and guides the user through:
@@ -183,7 +203,7 @@ Options:
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `--model` | prompt / `Qwen/Qwen3.5-9B-Base` | Starter model |
+| `--model` | prompt / `thinkingmachines/Inkling` | Starter model |
 | `--metric` | prompt | What should improve |
 | `--log` | `logs/sft-<timestamp>` | Training log path |
 | `--force` | false | Overwrite generated files |
@@ -204,12 +224,13 @@ Checks local prerequisites:
 - `python3`
 - `uv`
 - `tinker` CLI
-- Python imports for `tinker` and `tinker_cookbook`
+- Python imports for `tinker`, `tinker_cookbook`, and `tml_renderers`
+- Python 3.11+ for Inkling
 
 It does not install anything automatically. If packages are missing, install:
 
 ```bash
-uv pip install tinker-cookbook
+uv pip install -U 'tinker-cookbook[inkling]'
 ```
 
 ## `/tinker init [jsonl] [options]`
@@ -219,7 +240,7 @@ Guided golden-path setup for a chat SFT project. In interactive Pi, it asks for 
 Example:
 
 ```text
-/tinker init data/train.jsonl --model Qwen/Qwen3.5-9B-Base --metric "held-out support quality"
+/tinker init data/train.jsonl --model thinkingmachines/Inkling --metric "held-out support quality"
 ```
 
 Generated files:
@@ -248,14 +269,14 @@ The Python-backed check loads the recommended renderer for the model and produce
 Example:
 
 ```text
-/tinker validate data/train.jsonl --model Qwen/Qwen3.5-9B-Base
+/tinker validate data/train.jsonl --model thinkingmachines/Inkling
 ```
 
 Options:
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `--model` | `Qwen/Qwen3.5-9B-Base` | Model for renderer/tokenizer validation |
+| `--model` | `thinkingmachines/Inkling` | Model for renderer/tokenizer validation |
 | `--examples` | `200` | Number of examples to tokenize/check |
 | `--max-length` | `32768` | Length threshold for truncation-risk warnings |
 | `--quick` | false | Only run lightweight JSONL checks |
@@ -284,7 +305,7 @@ Supported match modes:
 Runs `eval.py` against a base model and writes `eval_results/baseline.json` by default.
 
 ```text
-/tinker eval baseline --model Qwen/Qwen3.5-9B-Base --yes
+/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9 --yes
 ```
 
 ## `/tinker eval checkpoint <tinker-path> [options]`
@@ -292,14 +313,15 @@ Runs `eval.py` against a base model and writes `eval_results/baseline.json` by d
 Runs the same eval against a Tinker sampler checkpoint.
 
 ```text
-/tinker eval checkpoint tinker://.../sampler_weights/... --model Qwen/Qwen3.5-9B-Base --yes
+/tinker eval checkpoint tinker://.../sampler_weights/... --model thinkingmachines/Inkling --effort 0.9 --yes
 ```
 
 For both baseline and checkpoint:
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `--model` | `Qwen/Qwen3.5-9B-Base` | Base model / renderer model |
+| `--model` | `thinkingmachines/Inkling` | Base model / renderer model |
+| `--effort` | `0.9` | Inkling reasoning effort in `[0, 1)`; keep identical before/after |
 | `--data` | `data/eval.jsonl` | Eval JSONL |
 | `--out` | `eval_results/baseline.json` or checkpoint-based name | Output JSON |
 | `--limit` | all | Limit examples |
@@ -322,14 +344,14 @@ Scaffolds an editable supervised fine-tuning project using `tinker-cookbook` wit
 Example:
 
 ```text
-/tinker sft data/train.jsonl --model Qwen/Qwen3.5-9B-Base --steps 20
+/tinker sft data/train.jsonl --model thinkingmachines/Inkling --steps 20
 ```
 
 Options:
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `--model` | `Qwen/Qwen3.5-9B-Base` | Tinker base model ID |
+| `--model` | `thinkingmachines/Inkling` | Tinker base model ID |
 | `--steps` / `--max_steps` | `20` | Generated `max_steps` |
 | `--batch-size` | `8` | Chat examples per batch |
 | `--lr` / `--learning-rate` | `2e-4` | Learning rate |
@@ -401,12 +423,12 @@ If `log_dir` is provided, also reads `metrics.jsonl` and displays a compact view
 
 ## `/tinker use <checkpoint> [alias]`
 
-Registers a Tinker sampler checkpoint as a Pi model using Tinker's OpenAI-compatible inference endpoint.
+Registers a Tinker sampler checkpoint as a Pi model using Tinker's Anthropic-compatible inference endpoint. Supply the base model so Inkling checkpoints retain reasoning, image, and effort capabilities.
 
 Example:
 
 ```text
-/tinker use tinker://0034...:train:0/sampler_weights/000080 my-sft
+/tinker use tinker://0034...:train:0/sampler_weights/000080 my-sft --base-model thinkingmachines/Inkling
 ```
 
 Then select it with:
@@ -420,8 +442,9 @@ Options:
 | Option | Default | Meaning |
 |---|---:|---|
 | `--alias` | `tinker-N` | Display name in Pi |
-| `--context` | `32768` | Context window to advertise to Pi |
-| `--max-tokens` | `4096` | Max output tokens to advertise to Pi |
+| `--base-model` | unknown | Set to `thinkingmachines/Inkling` for an Inkling checkpoint |
+| `--context` | `65536` for Inkling, otherwise `32768` | Context window to advertise to Pi |
+| `--max-tokens` | `16384` for Inkling, otherwise `4096` | Max output tokens to advertise to Pi |
 
 Registrations are saved to:
 

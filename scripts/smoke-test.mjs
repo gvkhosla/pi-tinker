@@ -12,6 +12,12 @@ const required = [
   "skills/tinker-debug/SKILL.md",
   "docs/commands.md",
   "docs/design.md",
+  "docs/coding-agents.md",
+  "scripts/agent-cli.mjs",
+  "CLAUDE.md",
+  "GEMINI.md",
+  ".github/copilot-instructions.md",
+  ".cursor/rules/pi-tinker.mdc",
   "examples/conversations.jsonl",
 ];
 
@@ -52,6 +58,7 @@ checkSkill("skills/tinker-debug/SKILL.md", "tinker-debug");
 
 try {
   execFileSync(process.execPath, ["--check", "extensions/tinker.ts"], { stdio: "pipe" });
+  execFileSync(process.execPath, ["--check", "scripts/agent-cli.mjs"], { stdio: "pipe" });
 } catch (error) {
   console.error("extensions/tinker.ts failed node --check");
   console.error(error.stderr?.toString() || error.message);
@@ -65,6 +72,10 @@ if (!pkg.pi?.extensions || !pkg.pi?.skills) {
 }
 if (!pkg.keywords?.includes("pi-package")) {
   console.error("package.json: missing pi-package keyword");
+  failed = true;
+}
+if (pkg.bin?.["pi-tinker-agent"] !== "./scripts/agent-cli.mjs") {
+  console.error("package.json: missing pi-tinker-agent binary");
   failed = true;
 }
 
