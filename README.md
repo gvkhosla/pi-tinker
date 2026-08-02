@@ -30,7 +30,7 @@ Then:
 /model
 ```
 
-Choose one of the Tinker Inkling models from `/model`. Inkling supports tools, images, streamed thinking, and adjustable reasoning effort.
+Choose Inkling or Inkling-Small, in either the 64K or 256K context variant, from `/model`. Both support tools, images, streamed thinking, and adjustable reasoning effort.
 
 ### 2. Try the no-cost demo
 

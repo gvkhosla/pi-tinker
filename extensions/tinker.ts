@@ -13,6 +13,8 @@ const TINKER_OAI_BASE_URL = "https://tinker.thinkingmachines.dev/services/tinker
 const TINKER_ANTHROPIC_BASE_URL = "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api";
 const INKLING_MODEL = "thinkingmachines/Inkling";
 const INKLING_256K_MODEL = "thinkingmachines/Inkling:peft:262144";
+const INKLING_SMALL_MODEL = "thinkingmachines/Inkling-Small";
+const INKLING_SMALL_256K_MODEL = "thinkingmachines/Inkling-Small:peft:262144";
 const DEFAULT_MODEL = INKLING_MODEL;
 const STATE_PATH = path.join(os.homedir(), ".pi", "agent", "tinker-checkpoints.json");
 const MESSAGE_TYPE = "tinker-report";
@@ -1681,6 +1683,28 @@ export default async function (pi: ExtensionAPI) {
         maxTokens: 16_384,
         compat: inklingCompat(),
       },
+      {
+        id: INKLING_SMALL_MODEL,
+        name: "Inkling-Small (Tinker, 64K)",
+        reasoning: true,
+        thinkingLevelMap: inklingThinkingLevels(),
+        input: ["text", "image"] as ("text" | "image")[],
+        cost: { input: 0.58, output: 1.44, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 65_536,
+        maxTokens: 16_384,
+        compat: inklingCompat(),
+      },
+      {
+        id: INKLING_SMALL_256K_MODEL,
+        name: "Inkling-Small (Tinker, 256K)",
+        reasoning: true,
+        thinkingLevelMap: inklingThinkingLevels(),
+        input: ["text", "image"] as ("text" | "image")[],
+        cost: { input: 1.16, output: 2.89, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 262_144,
+        maxTokens: 16_384,
+        compat: inklingCompat(),
+      },
     ];
     const checkpointModels = state.checkpoints.map((checkpoint) => {
       const inkling = checkpoint.reasoning ?? isInklingModel(checkpoint.baseModel);
@@ -1764,7 +1788,7 @@ export default async function (pi: ExtensionAPI) {
             "## What works",
             "- Chat, coding tools, images, and streamed reasoning.",
             "- Shift+Tab changes reasoning effort: low, medium, high, or xhigh.",
-            "- The normal model has a 64K Tinker context; a 256K option is also available.",
+            "- Inkling and Inkling-Small each have 64K and 256K context options.",
             "",
             "## To fine-tune Inkling",
             "Install the Python 3.11+ dependencies:",
@@ -1777,7 +1801,7 @@ export default async function (pi: ExtensionAPI) {
             "```",
             "",
             "Inkling defaults to high effort (0.9). Keep the same effort when comparing the base model and a trained checkpoint.",
-            "Advanced model id: `thinkingmachines/Inkling` (975B total / 41B active).",
+            "Model ids: `thinkingmachines/Inkling`, `thinkingmachines/Inkling:peft:262144`, `thinkingmachines/Inkling-Small`, and `thinkingmachines/Inkling-Small:peft:262144`."
           ].join("\n"));
           return;
         }

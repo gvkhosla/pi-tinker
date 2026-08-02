@@ -40,9 +40,11 @@ async function main() {
   try {
     await copyFile(path.join(repo, "examples", "conversations.jsonl"), path.join(tmp, "train.jsonl"));
 
-    // Extension loads without crashing and registers base Inkling even before checkpoints exist.
+    // Extension loads without crashing and registers all base Inkling variants even before checkpoints exist.
     const baseModels = pi(["--list-models"], { cwd: tmp });
     assert(baseModels.includes("thinkingmachines/Inkling"), "base Inkling model was not registered");
+    assert(baseModels.includes("thinkingmachines/Inkling-Small"), "Inkling-Small model was not registered");
+    assert(baseModels.includes("thinkingmachines/Inkling-Small:peft:262144"), "Inkling-Small 256K model was not registered");
 
     // The tool-agnostic coding-agent adapter should invoke the same extension.
     const agentOutput = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "inkling"], { cwd: tmp });
