@@ -349,7 +349,7 @@ For both baseline and checkpoint:
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `--model` | `thinkingmachines/Inkling` | Base model / renderer model |
+| `--model` | `thinkingmachines/Inkling-Small` | Base model / renderer model |
 | `--effort` | `0.9` | Inkling reasoning effort in `[0, 1)`; keep identical before/after |
 | `--data` | `data/eval.jsonl` | Eval JSONL |
 | `--out` | `eval_results/baseline.json` or checkpoint-based name | Output JSON |
@@ -360,7 +360,7 @@ For both baseline and checkpoint:
 
 ## `/tinker eval compare <baseline.json> <candidate.json>`
 
-Compares two eval result files and reports accuracy delta, wins, and regressions.
+Validates and compares two eval result files, then reports the strict quality-gate decision, accuracy delta, wins, and regressions. It fails closed on missing/invalid scores, zero examples, inconsistent counts, different example sets, renderer-model mismatch, or Inkling-effort mismatch.
 
 ```text
 /tinker eval compare eval_results/baseline.json eval_results/step-20.json
@@ -380,7 +380,7 @@ Options:
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `--model` | `thinkingmachines/Inkling` | Tinker base model ID |
+| `--model` | `thinkingmachines/Inkling-Small` | Tinker base model ID |
 | `--steps` / `--max_steps` | `20` | Generated `max_steps` |
 | `--batch-size` | `8` | Chat examples per batch |
 | `--lr` / `--learning-rate` | `2e-4` | Learning rate |

@@ -1914,31 +1914,92 @@ function formatEvalSummary(filePath: string): string {
   ].join("\n");
 }
 
+type ValidatedEvalSummary = {
+  raw: EvalSummary;
+  accuracy: number;
+  numExamples: number;
+  numCorrect: number;
+  effort?: number;
+};
+
+function validateEvalSummary(summary: EvalSummary, label: "baseline" | "candidate" | string): ValidatedEvalSummary {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) throw new Error(`${label} eval result must be a JSON object.`);
+  if (typeof summary.accuracy !== "number") throw new Error(`${label} accuracy is missing.`);
+  if (!Number.isFinite(summary.accuracy) || summary.accuracy < 0 || summary.accuracy > 1) throw new Error(`${label} accuracy must be a finite number in [0, 1].`);
+  if (!Number.isInteger(summary.num_examples) || summary.num_examples! <= 0) throw new Error(`${label} num_examples must be a positive integer.`);
+  if (!Number.isInteger(summary.num_correct) || summary.num_correct! < 0 || summary.num_correct! > summary.num_examples!) throw new Error(`${label} num_correct must be an integer between 0 and num_examples.`);
+  const expectedAccuracy = summary.num_correct! / summary.num_examples!;
+  if (Math.abs(summary.accuracy - expectedAccuracy) > 1e-9) throw new Error(`${label} accuracy is inconsistent with num_correct/num_examples.`);
+  if (summary.effort !== undefined && summary.effort !== null && (typeof summary.effort !== "number" || !Number.isFinite(summary.effort) || summary.effort < 0 || summary.effort >= 1)) {
+    throw new Error(`${label} effort must be a finite number in [0, 1).`);
+  }
+  if (summary.renderer_model?.startsWith("thinkingmachines/Inkling") && (summary.effort === undefined || summary.effort === null)) {
+    throw new Error(`${label} Inkling effort is missing.`);
+  }
+  if (summary.results !== undefined) {
+    if (!Array.isArray(summary.results) || summary.results.length !== summary.num_examples) throw new Error(`${label} results length does not match num_examples.`);
+    const correctRows = summary.results.filter((result) => result?.correct === true).length;
+    if (correctRows !== summary.num_correct) throw new Error(`${label} result rows are inconsistent with num_correct.`);
+    const indexes = summary.results.map((result) => result?.index);
+    if (indexes.some((index) => !Number.isInteger(index)) || new Set(indexes).size !== indexes.length) throw new Error(`${label} result indexes must be unique integers.`);
+  }
+  return {
+    raw: summary,
+    accuracy: summary.accuracy,
+    numExamples: summary.num_examples!,
+    numCorrect: summary.num_correct!,
+    effort: summary.effort ?? undefined,
+  };
+}
+
+function validateEvalPair(baselinePath: string, candidatePath: string): { baseline: ValidatedEvalSummary; candidate: ValidatedEvalSummary } {
+  const baseline = validateEvalSummary(readEvalSummary(baselinePath), "baseline");
+  const candidate = validateEvalSummary(readEvalSummary(candidatePath), "candidate");
+  if (baseline.numExamples !== candidate.numExamples) throw new Error(`eval example count mismatch: baseline=${baseline.numExamples}, candidate=${candidate.numExamples}.`);
+  const baselineHasEffort = baseline.effort !== undefined;
+  const candidateHasEffort = candidate.effort !== undefined;
+  if (baselineHasEffort !== candidateHasEffort || (baselineHasEffort && baseline.effort !== candidate.effort)) {
+    throw new Error(`eval effort mismatch: baseline=${baseline.effort ?? "missing"}, candidate=${candidate.effort ?? "missing"}.`);
+  }
+  const baselineRendererModel = baseline.raw.renderer_model;
+  const candidateRendererModel = candidate.raw.renderer_model;
+  if ((baselineRendererModel || candidateRendererModel) && baselineRendererModel !== candidateRendererModel) {
+    throw new Error(`renderer model mismatch: baseline=${baselineRendererModel ?? "missing"}, candidate=${candidateRendererModel ?? "missing"}.`);
+  }
+  if (baseline.raw.results && candidate.raw.results) {
+    const baselineByIndex = new Map(baseline.raw.results.map((result) => [result.index, result]));
+    const candidateIndexes = candidate.raw.results.map((result) => result.index).sort((a, b) => a - b);
+    const baselineIndexes = [...baselineByIndex.keys()].sort((a, b) => a - b);
+    if (baselineIndexes.some((index, position) => index !== candidateIndexes[position])) throw new Error("eval result indexes do not match; compare the same held-out examples.");
+    for (const result of candidate.raw.results) {
+      if (baselineByIndex.get(result.index)?.expected !== result.expected) throw new Error(`eval expected value mismatch at result #${result.index}; compare the same held-out examples.`);
+    }
+  }
+  return { baseline, candidate };
+}
+
 function compareEvalSummaries(baselinePath: string, candidatePath: string): string {
-  const baseline = readEvalSummary(baselinePath);
-  const candidate = readEvalSummary(candidatePath);
-  const bAcc = baseline.accuracy ?? 0;
-  const cAcc = candidate.accuracy ?? 0;
-  const delta = cAcc - bAcc;
-  const bResults = new Map((baseline.results ?? []).map((r) => [r.index, r]));
-  const effortMismatch = baseline.effort !== null && baseline.effort !== undefined && candidate.effort !== null && candidate.effort !== undefined && baseline.effort !== candidate.effort;
+  const { baseline, candidate } = validateEvalPair(baselinePath, candidatePath);
+  const delta = candidate.accuracy - baseline.accuracy;
+  const bResults = new Map((baseline.raw.results ?? []).map((result) => [result.index, result]));
   const wins: string[] = [];
   const regressions: string[] = [];
-  for (const r of candidate.results ?? []) {
-    const before = bResults.get(r.index);
+  for (const result of candidate.raw.results ?? []) {
+    const before = bResults.get(result.index);
     if (!before) continue;
-    if (!before.correct && r.correct) wins.push(`#${r.index}: ${JSON.stringify(String(r.output).slice(0, 220))}`);
-    if (before.correct && !r.correct) regressions.push(`#${r.index}: expected ${JSON.stringify(r.expected)}, got ${JSON.stringify(String(r.output).slice(0, 220))}`);
+    if (!before.correct && result.correct) wins.push(`#${result.index}: ${JSON.stringify(String(result.output).slice(0, 220))}`);
+    if (before.correct && !result.correct) regressions.push(`#${result.index}: expected ${JSON.stringify(result.expected)}, got ${JSON.stringify(String(result.output).slice(0, 220))}`);
   }
   return [
-    `# Eval comparison`,
-    `- Baseline: \`${baselinePath}\` — ${(bAcc * 100).toFixed(1)}% (${baseline.num_correct}/${baseline.num_examples})`,
-    `- Candidate: \`${candidatePath}\` — ${(cAcc * 100).toFixed(1)}% (${candidate.num_correct}/${candidate.num_examples})`,
+    "# Eval comparison",
+    `- Baseline: \`${baselinePath}\` — ${(baseline.accuracy * 100).toFixed(1)}% (${baseline.numCorrect}/${baseline.numExamples})`,
+    `- Candidate: \`${candidatePath}\` — ${(candidate.accuracy * 100).toFixed(1)}% (${candidate.numCorrect}/${candidate.numExamples})`,
     `- Delta: ${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)} points`,
-    effortMismatch ? `- ⚠️ Effort mismatch: baseline=${baseline.effort}, candidate=${candidate.effort}. Re-run at identical effort before attributing the delta to fine-tuning.` : (baseline.effort !== null && baseline.effort !== undefined ? `- Inkling effort: ${baseline.effort} (matched)` : ""),
-    wins.length ? `\n## Wins\n${wins.slice(0, 10).map((x) => `- ${x}`).join("\n")}` : "\n## Wins\nNone recorded.",
-    regressions.length ? `\n## Regressions\n${regressions.slice(0, 10).map((x) => `- ${x}`).join("\n")}` : "\n## Regressions\nNone recorded.",
-  ].join("\n");
+    `- Quality gate: ${candidate.accuracy > baseline.accuracy ? "PASS — candidate strictly beat baseline" : "FAIL — candidate must strictly beat baseline"}`,
+    baseline.effort !== undefined ? `- Inkling effort: ${baseline.effort} (matched)` : "",
+    wins.length ? `\n## Wins\n${wins.slice(0, 10).map((win) => `- ${win}`).join("\n")}` : "\n## Wins\nNone recorded.",
+    regressions.length ? `\n## Regressions\n${regressions.slice(0, 10).map((regression) => `- ${regression}`).join("\n")}` : "\n## Regressions\nNone recorded.",
+  ].filter(Boolean).join("\n");
 }
 
 type WizardState = {
@@ -1993,8 +2054,9 @@ function evalBeatBaseline(baselinePath: string, candidatePath: string): {
   baseline: number;
   candidate: number;
 } {
-  const baseline = readEvalSummary(baselinePath).accuracy ?? 0;
-  const candidate = readEvalSummary(candidatePath).accuracy ?? 0;
+  const pair = validateEvalPair(baselinePath, candidatePath);
+  const baseline = pair.baseline.accuracy;
+  const candidate = pair.candidate.accuracy;
   return { ok: candidate > baseline, delta: candidate - baseline, baseline, candidate };
 }
 
@@ -2836,7 +2898,7 @@ export default async function (pi: ExtensionAPI) {
             for (const effort of efforts) {
               const out = path.resolve(ctx.cwd, `eval_results/effort-${String(effort).replace(".", "-")}.json`);
               await execFile("python3", [script, "--base-model", stateForRun.model ?? model, "--effort", String(effort), "--data", evalData, "--out", out], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
-              results.push({ effort, accuracy: readEvalSummary(out).accuracy ?? 0, out });
+              results.push({ effort, accuracy: validateEvalSummary(readEvalSummary(out), `effort ${effort}`).accuracy, out });
             }
             results.sort((a, b) => b.accuracy - a.accuracy || a.effort - b.effort);
             const selected = results[0]!;

@@ -49,6 +49,19 @@ function wizardFingerprint(cwd, wizard) {
   return createHash("sha256").update(JSON.stringify(parts, Object.keys(parts).sort())).digest("hex");
 }
 
+function evalSummary(correctFlags, overrides = {}) {
+  const numExamples = correctFlags.length;
+  const numCorrect = correctFlags.filter(Boolean).length;
+  return {
+    target: "test",
+    num_examples: numExamples,
+    num_correct: numCorrect,
+    accuracy: numExamples ? numCorrect / numExamples : 0,
+    results: correctFlags.map((correct, index) => ({ index: index + 1, correct, expected: String(index + 1), output: correct ? String(index + 1) : "wrong" })),
+    ...overrides,
+  };
+}
+
 async function main() {
   // Fail fast if pi is not available locally.
   run("pi", ["--version"]);
@@ -202,11 +215,38 @@ async function main() {
     pi(["-p", "/tinker monitor logs/run"], { cwd: tmp });
     pi(["-p", "/tinker monitor --stop"], { cwd: tmp });
 
-    // Eval comparison should work with normal eval result JSON.
+    // Eval comparison must distinguish wins/ties/regressions and reject malformed or incomparable summaries.
     await mkdir(path.join(tmp, "eval_results"), { recursive: true });
-    writeFileSync(path.join(tmp, "eval_results", "baseline.json"), JSON.stringify({ target: "base", num_examples: 2, num_correct: 1, accuracy: 0.5, results: [{ index: 1, correct: true, expected: "a", output: "a" }, { index: 2, correct: false, expected: "b", output: "x" }] }));
-    writeFileSync(path.join(tmp, "eval_results", "candidate.json"), JSON.stringify({ target: "checkpoint", num_examples: 2, num_correct: 2, accuracy: 1.0, results: [{ index: 1, correct: true, expected: "a", output: "a" }, { index: 2, correct: true, expected: "b", output: "b" }] }));
-    pi(["-p", "/tinker eval compare eval_results/baseline.json eval_results/candidate.json"], { cwd: tmp });
+    const evalDir = path.join(tmp, "eval_results");
+    writeFileSync(path.join(evalDir, "baseline.json"), JSON.stringify(evalSummary([true, false])));
+    writeFileSync(path.join(evalDir, "candidate.json"), JSON.stringify(evalSummary([true, true])));
+    writeFileSync(path.join(evalDir, "tie.json"), JSON.stringify(evalSummary([false, true])));
+    writeFileSync(path.join(evalDir, "regression.json"), JSON.stringify(evalSummary([false, false])));
+    const compare = (candidate, baseline = "baseline.json") => run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "eval", "compare", `eval_results/${baseline}`, `eval_results/${candidate}`], { cwd: tmp });
+    assert(compare("candidate.json").includes("Quality gate: PASS"), "valid eval win did not pass");
+    assert(compare("tie.json").includes("Quality gate: FAIL"), "eval tie did not fail strict improvement");
+    assert(compare("regression.json").includes("Quality gate: FAIL"), "eval regression did not fail");
+
+    writeFileSync(path.join(evalDir, "missing-accuracy.json"), JSON.stringify(evalSummary([true, true], { accuracy: undefined })));
+    assert(compare("candidate.json", "missing-accuracy.json").includes("baseline accuracy is missing"), "missing baseline accuracy did not fail closed");
+    writeFileSync(path.join(evalDir, "invalid-accuracy.json"), JSON.stringify(evalSummary([true, true], { accuracy: 1.5 })));
+    assert(compare("invalid-accuracy.json").includes("candidate accuracy must be a finite number"), "out-of-range accuracy did not fail closed");
+    writeFileSync(path.join(evalDir, "zero.json"), JSON.stringify(evalSummary([])));
+    assert(compare("zero.json").includes("candidate num_examples must be a positive integer"), "zero-example eval did not fail closed");
+    writeFileSync(path.join(evalDir, "inconsistent.json"), JSON.stringify(evalSummary([true, true], { num_correct: 1 })));
+    assert(compare("inconsistent.json").includes("candidate accuracy is inconsistent"), "inconsistent num_correct did not fail closed");
+    writeFileSync(path.join(evalDir, "three.json"), JSON.stringify(evalSummary([true, true, false])));
+    assert(compare("three.json").includes("eval example count mismatch"), "mismatched eval counts did not fail closed");
+    writeFileSync(path.join(evalDir, "effort-baseline.json"), JSON.stringify(evalSummary([true, false], { renderer_model: "thinkingmachines/Inkling-Small", effort: 0.7 })));
+    writeFileSync(path.join(evalDir, "effort-candidate.json"), JSON.stringify(evalSummary([true, true], { renderer_model: "thinkingmachines/Inkling-Small", effort: 0.9 })));
+    assert(compare("effort-candidate.json", "effort-baseline.json").includes("eval effort mismatch"), "mismatched Inkling effort did not fail closed");
+    writeFileSync(path.join(evalDir, "renderer-baseline.json"), JSON.stringify(evalSummary([true, false], { renderer_model: "Qwen/base-a" })));
+    writeFileSync(path.join(evalDir, "renderer-candidate.json"), JSON.stringify(evalSummary([true, true], { renderer_model: "Qwen/base-b" })));
+    assert(compare("renderer-candidate.json", "renderer-baseline.json").includes("renderer model mismatch"), "mismatched renderer model did not fail closed");
+    const differentExamples = evalSummary([true, true]);
+    differentExamples.results[1].expected = "different held-out row";
+    writeFileSync(path.join(evalDir, "different-examples.json"), JSON.stringify(differentExamples));
+    assert(compare("different-examples.json").includes("eval expected value mismatch"), "different held-out examples did not fail closed");
 
     // /tinker use should register a checkpoint model in Pi's model registry.
     pi(["-p", "/tinker use tinker://pi-tinker-test/sampler_weights/000001 pi-tinker-test --base-model thinkingmachines/Inkling-Small:peft:262144"], { cwd: tmp });

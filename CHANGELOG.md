@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.5
+
+Fail-closed eval comparisons:
+
+- Refuse approval when accuracy/count fields are missing, non-finite, out of range, zero-sized, or internally inconsistent.
+- Refuse comparisons with different example counts, result indexes, Inkling efforts, or renderer models.
+- `/tinker eval compare` now prints an explicit strict quality-gate PASS/FAIL for valid comparisons and actionable errors for invalid ones.
+- Added non-API integration cases for wins, ties, regressions, malformed summaries, count mismatches, and effort mismatches.
+
 ## 0.9.4
 
 Explicit safety overrides:
