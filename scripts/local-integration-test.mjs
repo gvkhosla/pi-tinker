@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir } from "node:fs/promises";
 import os from "node:os";
@@ -31,6 +32,21 @@ function assert(condition, message) {
 
 function listedModelIds(output, provider) {
   return new Set(output.split(/\n/).map((line) => line.trim().split(/\s+/)).filter((columns) => columns[0] === provider).map((columns) => columns[1]));
+}
+
+function fileHash(file) {
+  return existsSync(file) ? createHash("sha256").update(readFileSync(file)).digest("hex") : undefined;
+}
+
+function wizardFingerprint(cwd, wizard) {
+  const parts = {
+    data: fileHash(wizard.dataFile),
+    effort: wizard.effort,
+    eval: fileHash(path.join(cwd, "data", "eval.jsonl")),
+    evalScript: fileHash(path.join(cwd, "eval.py")),
+    model: wizard.model,
+  };
+  return createHash("sha256").update(JSON.stringify(parts, Object.keys(parts).sort())).digest("hex");
 }
 
 async function main() {
@@ -82,6 +98,8 @@ async function main() {
     assert(existsSync(path.join(tmp, "train_sft.py")), "/tinker new did not create train_sft.py");
     pi(["-p", "/tinker doctor data/train.jsonl"], { cwd: tmp });
     pi(["-p", "/tinker improve support.csv --goal support-quality --budget demo --force"], { cwd: tmp });
+    const forceRetired = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "improve", "support.csv", "--model", "meta-llama/Llama-3.1-8B", "--budget", "demo", "--force"], { cwd: tmp });
+    assert(forceRetired.includes("not on Tinker's current lineup"), "--force bypassed the retired-model safety check");
     const wizardPath = path.join(tmp, ".tinker-pi", "state.json");
     assert(existsSync(wizardPath), "/tinker improve demo did not create wizard state");
     let wizard = JSON.parse(readFileSync(wizardPath, "utf8"));
@@ -106,14 +124,18 @@ async function main() {
     wizard = JSON.parse(readFileSync(wizardPath, "utf8"));
     assert(!wizard.baselineResult && !wizard.candidateCheckpointPath && !wizard.approvedCheckpointPath && !wizard.registeredModel, "changed source data did not invalidate stale run state");
 
-    // latest is approved-only, and explicit rejected candidates require --force.
+    // latest is approved-only, and --force cannot bypass evaluation safety.
     const latestBlocked = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "deploy", "latest"], { cwd: tmp });
     assert(latestBlocked.includes("No approved checkpoint"), "deploy latest did not fail closed without approval");
     wizard.candidateCheckpointPath = "tinker://pi-tinker-test/sampler_weights/rejected";
     wizard.candidateDecision = "rejected";
     writeFileSync(wizardPath, JSON.stringify(wizard, null, 2));
     const rejectedBlocked = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "deploy", "tinker://pi-tinker-test/sampler_weights/rejected"], { cwd: tmp });
-    assert(rejectedBlocked.includes("deploy blocked") || rejectedBlocked.includes("rejected or unevaluated"), "explicit rejected checkpoint was deployable without --force");
+    assert(rejectedBlocked.includes("deploy blocked") || rejectedBlocked.includes("rejected or unevaluated"), "explicit rejected checkpoint was deployable without an override");
+    const forceStillBlocked = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "deploy", "tinker://pi-tinker-test/sampler_weights/rejected", "--force"], { cwd: tmp });
+    assert(forceStillBlocked.includes("deploy blocked"), "--force bypassed the deployment quality gate");
+    pi(["-p", "/tinker deploy tinker://pi-tinker-test/sampler_weights/rejected --allow-unapproved --out deploy/rejected --force"], { cwd: tmp });
+    assert(existsSync(path.join(tmp, "deploy", "rejected", ".env.example")), "--allow-unapproved did not permit an explicit rejected checkpoint");
     wizard.approvedCheckpointPath = "tinker://pi-tinker-test/sampler_weights/approved";
     wizard.candidateCheckpointPath = wizard.approvedCheckpointPath;
     wizard.candidateDecision = "approved";
@@ -121,6 +143,10 @@ async function main() {
     writeFileSync(wizardPath, JSON.stringify(wizard, null, 2));
     const staleApproved = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "deploy", "latest"], { cwd: tmp });
     assert(staleApproved.includes("provenance is stale"), "deploy latest did not reject stale approved provenance");
+    const staleWithForce = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "deploy", "latest", "--force"], { cwd: tmp });
+    assert(staleWithForce.includes("provenance is stale"), "--force bypassed stale provenance");
+    wizard.approvedFingerprint = wizardFingerprint(tmp, wizard);
+    writeFileSync(wizardPath, JSON.stringify(wizard, null, 2));
     pi(["-p", "/tinker deploy latest --out deploy/approved --force"], { cwd: tmp });
     assert(readFileSync(path.join(tmp, "deploy", "approved", ".env.example"), "utf8").includes("sampler_weights/approved"), "deploy latest did not resolve the approved checkpoint");
 

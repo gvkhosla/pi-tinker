@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.4
+
+Explicit safety overrides:
+
+- `--force` now only overwrites/regenerates artifacts; it cannot approve a regression, allow a retired model, or bypass deployment provenance.
+- `--accept-regression` is the deliberate managed-improve quality override and is recorded as `accepted-regression` rather than a normal win.
+- `--allow-retired-model` is required to run improve with a retired model id.
+- `--allow-unapproved` plus an explicit checkpoint URI is required to generate deploy files for a rejected, unevaluated, or stale checkpoint. It never changes what `latest` means.
+
 ## 0.9.3
 
 Inkling-Small model metadata (adapted from [Cameron's PR #1](https://github.com/gvkhosla/pi-tinker/pull/1)):

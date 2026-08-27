@@ -22,7 +22,7 @@ node scripts/agent-cli.mjs doctor
 node scripts/agent-cli.mjs validate data/train.jsonl --model thinkingmachines/Inkling-Small
 ```
 
-When installed from npm, use `pi-tinker-agent` instead. Read `docs/coding-agents.md` for details. Other agents should inspect and edit the generated Python directly; they must not imitate hidden Pi UI state or trigger API-using stages without explicit user approval.
+When installed from npm, use `pi-tinker-agent` instead. Read `docs/coding-agents.md` for details. Other agents should inspect and edit the generated Python directly; they must not imitate hidden Pi UI state or trigger API-using stages without explicit user approval. `--force` is file-only; never add `--accept-regression`, `--allow-retired-model`, or `--allow-unapproved` unless the user explicitly requests that exact safety override.
 
 ## Best first commands for users
 

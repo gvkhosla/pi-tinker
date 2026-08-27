@@ -70,7 +70,7 @@ If the smoke run and eval look good:
 data → held-out eval → validation → baseline → smoke → training → checkpoint eval → approval → chat/deploy
 ```
 
-It hashes the source, train/eval data, eval code, model, and effort so stale results are never reused. Candidate checkpoints stay separate from approved checkpoints; `deploy latest` only resolves a checkpoint that beat its matching baseline.
+It hashes the source, train/eval data, eval code, model, and effort so stale results are never reused. Candidate checkpoints stay separate from approved checkpoints; `deploy latest` only resolves a checkpoint that beat its matching baseline. `--force` only regenerates files—it cannot bypass quality or provenance checks. Dangerous overrides have explicit names such as `--accept-regression` and `--allow-unapproved`.
 
 ## Setup for fine-tuning
 

@@ -15,7 +15,7 @@ You only need a few commands for the normal workflow:
 | Learn about Inkling | `/tinker inkling` |
 | Choose Inkling or a checkpoint | `/model` |
 
-`new`, `start`, `init`, and `finetune` are aliases for `improve --budget demo`. Managed improve hashes data/code/model/effort provenance. Smoke/small refuse to scale or approve a checkpoint that does not beat the matching baseline unless you pass `--force`; `deploy latest` resolves only an approved checkpoint.
+`new`, `start`, `init`, and `finetune` are aliases for `improve --budget demo`. Managed improve hashes data/code/model/effort provenance. Smoke/small refuse to scale or approve a checkpoint that does not beat the matching baseline unless you deliberately pass `--accept-regression`; `--force` only regenerates artifacts. `deploy latest` resolves only an approved checkpoint.
 
 The `demo` budget makes no API calls. Commands using `--yes` may sample or train through the Tinker API.
 
@@ -81,13 +81,15 @@ Options:
 | `--no-sweep` | false | Skip automatic effort scoring and keep the pinned/default effort |
 | `--steps` | budget default | Override scale-up max steps |
 | `--yes` | false | Confirm API-using stages |
-| `--force` | false | Overwrite generated files, rerun, or explicitly override a quality gate |
+| `--force` | false | Overwrite generated files and rerun generated baseline artifacts; never bypasses safety gates |
+| `--accept-regression` | false | Deliberately continue/approve when candidate ≤ baseline; recorded as an accepted regression |
+| `--allow-retired-model` | false | Deliberately use a model id no longer on Tinker's current lineup |
 | `--alias` | generated | Alias for an approved registered checkpoint |
 | `--register` | true | Register an approved checkpoint for chat |
 
 ## `/tinker deploy <checkpoint-or-alias> [alias] [options]`
 
-Generates Tinker API clients **and** a serving decision. It does not stand up GPUs. `latest` means the latest checkpoint approved by managed evaluation, never merely the newest candidate. An explicit rejected/unevaluated candidate is blocked unless `--force` is supplied.
+Generates Tinker API clients **and** a serving decision. It does not stand up GPUs. `latest` means the latest checkpoint approved by managed evaluation, never merely the newest candidate. A rejected, unevaluated, or stale checkpoint requires both its explicit URI and `--allow-unapproved`; `--force` only overwrites deploy files.
 
 ```text
 /tinker deploy latest
@@ -119,7 +121,8 @@ Options:
 | `--out` | `deploy/<alias>` | Output directory |
 | `--alias` | positional/generated | Friendly name |
 | `--model` / `--base-model` | checkpoint/wizard base | Architecture used for export + HTDYM mapping |
-| `--force` | false | Overwrite existing files |
+| `--force` | false | Overwrite existing deploy files; never bypasses approval/provenance |
+| `--allow-unapproved` | false | With an explicit checkpoint URI, acknowledge rejected/unevaluated/stale provenance |
 
 ## `/tinker demo`
 

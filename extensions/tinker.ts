@@ -1966,7 +1966,7 @@ type WizardState = {
   candidateCheckpointPath?: string;
   candidateResult?: string;
   candidateFingerprint?: string;
-  candidateDecision?: "approved" | "rejected";
+  candidateDecision?: "approved" | "rejected" | "accepted-regression";
   approvedCheckpointPath?: string;
   approvedResult?: string;
   approvedFingerprint?: string;
@@ -2019,7 +2019,7 @@ function nextImproveCommand(cwd: string, state: WizardState): string {
       return `/tinker improve ${data} --budget smoke --yes${flags}`;
     }
   }
-  if (state.candidateDecision === "approved" && state.approvedCheckpointPath && state.approvedCheckpointPath === state.candidateCheckpointPath) {
+  if ((state.candidateDecision === "approved" || state.candidateDecision === "accepted-regression") && state.approvedCheckpointPath && state.approvedCheckpointPath === state.candidateCheckpointPath) {
     return `/tinker deploy ${state.registeredModel ?? "latest"}`;
   }
   return `/tinker improve ${data} --budget small --yes${flags}`;
@@ -2656,6 +2656,8 @@ export default async function (pi: ExtensionAPI) {
         }
 
         const force = options.force === true;
+        const acceptRegression = options["accept-regression"] === true;
+        const allowRetiredModel = options["allow-retired-model"] === true;
         const yes = options.yes === true;
         const existingWizard = await readWizardState(ctx.cwd);
         const model = String(options.model ?? existingWizard?.model ?? DEFAULT_MODEL);
@@ -2676,11 +2678,11 @@ export default async function (pi: ExtensionAPI) {
             if (options.goal === undefined && options.metric === undefined) metric = result.template.goal;
             sections.push(`## Example\nCopied \`${result.template.title}\` to \`${dataFileInput}\`.`);
           }
-          if (isRetiredModel(model) && !force) {
+          if (isRetiredModel(model) && !allowRetiredModel) {
             sendReport("Tinker improve", [
               `\`${model}\` is not on Tinker's current lineup.`,
               `Check ${MODELS_DOCS_URL} and ${DEPRECATIONS_URL}.`,
-              "Pass `--force` to proceed anyway, or pick Inkling-Small / a live Qwen id.",
+              "Pass `--allow-retired-model` to proceed deliberately, or pick Inkling-Small / a live Qwen id.",
             ].join("\n"), "error");
             return;
           }
@@ -2804,7 +2806,7 @@ export default async function (pi: ExtensionAPI) {
             return;
           }
           const evalRowCount = readFileSync(evalData, "utf8").split(/\n/).filter((line) => line.trim()).length;
-          if (evalRowCount < 2 && !force) {
+          if (evalRowCount < 2) {
             sendReport("Tinker improve", `Held-out eval has ${evalRowCount} row(s). Add at least 2 reviewed rows to \`data/eval.jsonl\` before API usage.`, "warning");
             return;
           }
@@ -2902,7 +2904,7 @@ export default async function (pi: ExtensionAPI) {
           await patchWizardState(ctx.cwd, { smokeAt: Date.now(), smokeLogDir: smokeLog });
 
           const smokeCheckpoint = firstSamplerCheckpoint(path.resolve(ctx.cwd, smokeLog));
-          let smokeBeatBaseline = force;
+          let smokeBeatBaseline = false;
           if (smokeCheckpoint) {
             ctx.ui.setStatus("tinker", "managed improve: smoke checkpoint eval");
             const smokeEvalOut = path.resolve(ctx.cwd, "eval_results/smoke.json");
@@ -2910,12 +2912,13 @@ export default async function (pi: ExtensionAPI) {
             sections.push(`## Smoke checkpoint eval\n${formatEvalSummary(smokeEvalOut)}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${smokeEval.stdout}\n${smokeEval.stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
             sections.push(compareEvalSummaries(baselineOut, smokeEvalOut));
             const cmp = evalBeatBaseline(baselineOut, smokeEvalOut);
-            smokeBeatBaseline = cmp.ok || force;
+            smokeBeatBaseline = cmp.ok || acceptRegression;
+            const smokeDecision: WizardState["candidateDecision"] = cmp.ok ? "approved" : acceptRegression ? "accepted-regression" : "rejected";
             stateForRun.checkpointPath = smokeCheckpoint;
             stateForRun.candidateCheckpointPath = smokeCheckpoint;
             stateForRun.candidateResult = smokeEvalOut;
             stateForRun.candidateFingerprint = runFingerprint;
-            stateForRun.candidateDecision = cmp.ok || force ? "approved" : "rejected";
+            stateForRun.candidateDecision = smokeDecision;
             await patchWizardState(ctx.cwd, {
               checkpointPath: smokeCheckpoint,
               candidateCheckpointPath: smokeCheckpoint,
@@ -2925,10 +2928,12 @@ export default async function (pi: ExtensionAPI) {
             });
             if (!cmp.ok) {
               sections.push(suggestDataImprovementsFromEval(smokeEvalOut));
-              sections.push(`## Stopped: checkpoint did not beat baseline\n${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%. Add 2–5 training examples like the failures, then re-run smoke. Pass --force to scale anyway.`);
+              sections.push(acceptRegression
+                ? `## Regression explicitly accepted\n${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%. Continuing only because \`--accept-regression\` was supplied.`
+                : `## Stopped: checkpoint did not beat baseline\n${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%. Add 2–5 training examples like the failures, then re-run smoke. Pass \`--accept-regression\` to override deliberately.`);
               const saved = (await readWizardState(ctx.cwd)) ?? stateForRun;
               sections.push(`## Next command\n\`\`\`text\n${nextImproveCommand(ctx.cwd, saved)}\n\`\`\``);
-              if (budget !== "smoke" && !force) {
+              if (budget !== "smoke" && !acceptRegression) {
                 sendReport("Tinker improve stopped: no improvement", sections.join("\n\n---\n\n"), "warning");
                 return;
               }
@@ -2940,14 +2945,14 @@ export default async function (pi: ExtensionAPI) {
           if (budget === "smoke") {
             const saved = (await readWizardState(ctx.cwd)) ?? stateForRun;
             sections.push(smokeBeatBaseline
-              ? "## Stopped after smoke budget\nSmoke beat baseline (or `--force`). Next: `--budget small --yes`."
+              ? `## Stopped after smoke budget\n${acceptRegression ? "Regression was explicitly accepted." : "Smoke beat baseline."} Next: \`--budget small --yes\`.`
               : "## Stopped after smoke budget\nDo not scale yet.");
             sections.push(`## Next command\n\`\`\`text\n${nextImproveCommand(ctx.cwd, saved)}\n\`\`\``);
             sendReport("Tinker improve smoke completed", sections.join("\n\n---\n\n"), smokeBeatBaseline ? "success" : "warning");
             return;
           }
 
-          if (!smokeBeatBaseline && !force) {
+          if (!smokeBeatBaseline) {
             sendReport("Tinker improve refused to scale", sections.join("\n\n---\n\n"), "warning");
             return;
           }
@@ -2966,28 +2971,32 @@ export default async function (pi: ExtensionAPI) {
             sections.push(`## Checkpoint eval\n${formatEvalSummary(candidateOut)}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${evalRun.stdout}\n${evalRun.stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
             sections.push(compareEvalSummaries(baselineOut, candidateOut));
             const cmp = evalBeatBaseline(baselineOut, candidateOut);
+            const finalDecision: WizardState["candidateDecision"] = cmp.ok ? "approved" : acceptRegression ? "accepted-regression" : "rejected";
             await patchWizardState(ctx.cwd, {
               checkpointPath: checkpoint,
               candidateCheckpointPath: checkpoint,
               candidateResult: candidateOut,
               candidateFingerprint: runFingerprint,
-              candidateDecision: cmp.ok || force ? "approved" : "rejected",
+              candidateDecision: finalDecision,
             });
-            if (!cmp.ok && !force) {
+            if (!cmp.ok && !acceptRegression) {
               sections.push(suggestDataImprovementsFromEval(candidateOut));
-              sections.push(`## Not registered\nCheckpoint did not beat baseline (${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%). Not registering for chat. Add examples and re-run smoke, or pass --force.`);
+              sections.push(`## Not registered\nCheckpoint did not beat baseline (${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%). Not registering for chat. Add examples and re-run smoke, or pass \`--accept-regression\` deliberately.`);
               const saved = (await readWizardState(ctx.cwd)) ?? stateForRun;
               sections.push(`## Next command\n\`\`\`text\n${nextImproveCommand(ctx.cwd, saved)}\n\`\`\``);
               sendReport("Tinker improve completed without a win", sections.join("\n\n---\n\n"), "warning");
               return;
             }
             sections.push(suggestDataImprovementsFromEval(candidateOut));
+            if (!cmp.ok && acceptRegression) {
+              sections.push(`## Regression explicitly accepted\nApproving ${(cmp.candidate * 100).toFixed(1)}% vs baseline ${(cmp.baseline * 100).toFixed(1)}% only because \`--accept-regression\` was supplied.`);
+            }
             await patchWizardState(ctx.cwd, {
               approvedCheckpointPath: checkpoint,
               approvedResult: candidateOut,
               approvedFingerprint: runFingerprint,
               approvedAt: Date.now(),
-              candidateDecision: "approved",
+              candidateDecision: finalDecision,
             });
             const alias = sanitizeName(String(options.alias ?? `tinker-${path.basename(trainLog)}`));
             if (options.register !== false) {
@@ -3000,7 +3009,7 @@ export default async function (pi: ExtensionAPI) {
                 candidateCheckpointPath: checkpoint,
                 candidateResult: candidateOut,
                 candidateFingerprint: runFingerprint,
-                candidateDecision: "approved",
+                candidateDecision: finalDecision,
                 registeredModel: alias,
               });
               sections.push(`## Registered for chat\nRegistered \`${alias}\`. Use \`/model\` to select it, then:\n\n\`\`\`text\n/tinker deploy ${alias}\n\`\`\``);
@@ -3030,6 +3039,8 @@ export default async function (pi: ExtensionAPI) {
       if (subcommand === "deploy") {
         const { positional, options } = parseOptions(rest);
         const wizard = await readWizardState(ctx.cwd);
+        const explicitCheckpoint = Boolean(positional[0]?.startsWith("tinker://"));
+        const allowUnapproved = options["allow-unapproved"] === true && explicitCheckpoint;
         const resolved = resolveCheckpointRef(positional[0], state, wizard);
         if (!resolved.checkpoint) {
           sendReport("Tinker deploy", [
@@ -3044,12 +3055,12 @@ export default async function (pi: ExtensionAPI) {
           ].join("\n"), "warning");
           return;
         }
-        if (wizard?.candidateCheckpointPath === resolved.checkpoint && wizard.approvedCheckpointPath !== resolved.checkpoint && options.force !== true) {
-          sendReport("Tinker deploy blocked", "That checkpoint is a rejected or unevaluated candidate. Deploy an approved checkpoint, or pass `--force` with the explicit checkpoint URI.", "warning");
+        if (wizard?.candidateCheckpointPath === resolved.checkpoint && wizard.approvedCheckpointPath !== resolved.checkpoint && !allowUnapproved) {
+          sendReport("Tinker deploy blocked", "That checkpoint is a rejected or unevaluated candidate. Deploy an approved checkpoint, or pass `--allow-unapproved` with the explicit checkpoint URI.", "warning");
           return;
         }
-        if (wizard?.approvedCheckpointPath === resolved.checkpoint && wizard.approvedFingerprint !== wizardRunFingerprint(ctx.cwd, wizard) && options.force !== true) {
-          sendReport("Tinker deploy blocked", "The approved checkpoint's data/eval/code/model/effort provenance is stale. Re-run `/tinker improve` to evaluate again, or pass `--force` with the explicit checkpoint URI.", "warning");
+        if (wizard?.approvedCheckpointPath === resolved.checkpoint && wizard.approvedFingerprint !== wizardRunFingerprint(ctx.cwd, wizard) && !allowUnapproved) {
+          sendReport("Tinker deploy blocked", "The approved checkpoint's data/eval/code/model/effort provenance is stale. Re-run `/tinker improve` to evaluate again, or pass `--allow-unapproved` with the explicit checkpoint URI.", "warning");
           return;
         }
         const alias = sanitizeName(String(options.alias ?? positional[1] ?? resolved.alias ?? "my-finetune"));
