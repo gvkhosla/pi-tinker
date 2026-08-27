@@ -21,7 +21,7 @@ The `demo` budget makes no API calls. Commands using `--yes` may sample or train
 
 ## `/tinker inkling [info|sweep]`
 
-Shows Inkling setup and registers Inkling-Small (default), full Inkling, and the 256K variant in Pi automatically. After setting `TINKER_API_KEY`, pick one with `/model`.
+Shows Inkling setup and registers Inkling-Small (default) and full Inkling in both 64K and 256K variants. After setting `TINKER_API_KEY`, pick one with `/model`.
 
 ```text
 /tinker inkling

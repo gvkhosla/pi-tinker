@@ -90,7 +90,7 @@ If the user is stuck:
 - Create and run an eval-first baseline/checkpoint comparison flow.
 - Run a 2-step smoke test before spending real compute.
 - Monitor logs and discover checkpoints.
-- Register Inkling-Small (default), full Inkling, the 256K variant, and Tinker sampler checkpoints as Pi models with tool use, vision, streamed thinking, and effort controls.
+- Register Inkling-Small (default) and full Inkling in 64K/256K variants, plus Tinker sampler checkpoints, as Pi models with tool use, vision, streamed thinking, and effort controls.
 - Expose the same `/tinker` operator to other coding agents through the `pi-tinker-agent` shell adapter.
 
 ## What is not solved here

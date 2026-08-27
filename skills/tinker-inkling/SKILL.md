@@ -9,9 +9,10 @@ Thinking Machines' models for Tinker. Same renderer (`tml_v0`), tokenizer, and e
 
 | Id | Size | When |
 |---|---|---|
-| `thinkingmachines/Inkling-Small` | 276B / 12B active | **Default.** Coding, grading, synthetic data, cheaper runs. |
-| `thinkingmachines/Inkling` | 975B / 41B active | Only if the user asks for full Inkling. |
-| `thinkingmachines/Inkling:peft:262144` | full, 256K ctx | Long-context inference/training variant. |
+| `thinkingmachines/Inkling-Small` | 276B / 12B active, 64K ctx | **Default.** Coding, grading, synthetic data, cheaper runs. |
+| `thinkingmachines/Inkling-Small:peft:262144` | small, 256K ctx | Efficient long-context inference/training. |
+| `thinkingmachines/Inkling` | 975B / 41B active, 64K ctx | Only if the user asks for full Inkling. |
+| `thinkingmachines/Inkling:peft:262144` | full, 256K ctx | Full long-context inference/training. |
 
 Both are post-trained starting points, not base models.
 

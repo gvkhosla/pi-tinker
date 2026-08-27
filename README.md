@@ -30,7 +30,7 @@ Then:
 /model
 ```
 
-Choose an Inkling model from `/model`. **Inkling-Small is the default** (cheaper, same renderer and effort interface). Full Inkling and the 256K variant are there if you need them. All three support tools, images, streamed thinking, and adjustable reasoning effort.
+Choose an Inkling model from `/model`. **Inkling-Small 64K is the default** (cheaper, same renderer and effort interface). Inkling-Small and full Inkling each have a 256K long-context option. All four support tools, images, streamed thinking, and adjustable reasoning effort.
 
 ### 2. Try the no-cost demo
 

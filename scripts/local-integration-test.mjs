@@ -29,6 +29,10 @@ function assert(condition, message) {
   }
 }
 
+function listedModelIds(output, provider) {
+  return new Set(output.split(/\n/).map((line) => line.trim().split(/\s+/)).filter((columns) => columns[0] === provider).map((columns) => columns[1]));
+}
+
 async function main() {
   // Fail fast if pi is not available locally.
   run("pi", ["--version"]);
@@ -40,10 +44,16 @@ async function main() {
   try {
     await copyFile(path.join(repo, "examples", "conversations.jsonl"), path.join(tmp, "train.jsonl"));
 
-    // Extension loads without crashing and registers base Inkling even before checkpoints exist.
-    const baseModels = pi(["--list-models"], { cwd: tmp });
-    assert(baseModels.includes("thinkingmachines/Inkling"), "base Inkling model was not registered");
-    assert(baseModels.includes("thinkingmachines/Inkling-Small"), "Inkling-Small was not registered");
+    // Extension loads without crashing and registers every base Inkling variant with exact IDs.
+    const baseModels = listedModelIds(pi(["--list-models"], { cwd: tmp }), "tinker");
+    for (const model of [
+      "thinkingmachines/Inkling-Small",
+      "thinkingmachines/Inkling-Small:peft:262144",
+      "thinkingmachines/Inkling",
+      "thinkingmachines/Inkling:peft:262144",
+    ]) {
+      assert(baseModels.has(model), `${model} was not registered exactly`);
+    }
 
     // The tool-agnostic coding-agent adapter should invoke the same extension.
     const agentOutput = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "inkling"], { cwd: tmp });
@@ -173,11 +183,13 @@ async function main() {
     pi(["-p", "/tinker eval compare eval_results/baseline.json eval_results/candidate.json"], { cwd: tmp });
 
     // /tinker use should register a checkpoint model in Pi's model registry.
-    pi(["-p", "/tinker use tinker://pi-tinker-test/sampler_weights/000001 pi-tinker-test --base-model thinkingmachines/Inkling"], { cwd: tmp });
+    pi(["-p", "/tinker use tinker://pi-tinker-test/sampler_weights/000001 pi-tinker-test --base-model thinkingmachines/Inkling-Small:peft:262144"], { cwd: tmp });
     assert(existsSync(statePath), "/tinker use did not create checkpoint state file");
     const state = JSON.parse(readFileSync(statePath, "utf8"));
-    assert(state.checkpoints?.some((m) => m.name === "pi-tinker-test"), "/tinker use did not persist checkpoint model");
-    assert(state.checkpoints?.find((m) => m.name === "pi-tinker-test")?.baseModel === "thinkingmachines/Inkling", "/tinker use did not persist Inkling checkpoint capabilities");
+    const registered = state.checkpoints?.find((m) => m.name === "pi-tinker-test");
+    assert(registered, "/tinker use did not persist checkpoint model");
+    assert(registered.baseModel === "thinkingmachines/Inkling-Small:peft:262144", "/tinker use did not persist Inkling-Small checkpoint capabilities");
+    assert(registered.contextWindow === 262_144, "256K Inkling-Small checkpoint did not retain its context window");
 
     const models = run("bash", ["-lc", `pi --no-extensions -e '${repo}' --list-models pi-tinker-test 2>&1`], { cwd: tmp });
     assert(models.includes("tinker://pi-tinker-test/sampler_weights/000001") || models.includes("pi-tinker-test"), "registered Tinker model did not appear in --list-models output");

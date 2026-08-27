@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.3
+
+Inkling-Small model metadata (adapted from [Cameron's PR #1](https://github.com/gvkhosla/pi-tinker/pull/1)):
+
+- Registered the official `thinkingmachines/Inkling-Small:peft:262144` long-context model alongside the 64K default.
+- Updated Inkling-Small's limited-time discounted pricing to $0.58/$1.44 (64K) and $1.16/$2.89 (256K).
+- Preserve `:peft:<length>` context windows when registering trained checkpoints.
+- Test exact model IDs so substring matches cannot hide a missing variant.
+
 ## 0.9.2
 
 Trust patch:

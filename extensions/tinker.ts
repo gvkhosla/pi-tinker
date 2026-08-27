@@ -14,6 +14,7 @@ const TINKER_OAI_BASE_URL = "https://tinker.thinkingmachines.dev/services/tinker
 const TINKER_ANTHROPIC_BASE_URL = "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api";
 const INKLING_MODEL = "thinkingmachines/Inkling";
 const INKLING_SMALL_MODEL = "thinkingmachines/Inkling-Small";
+const INKLING_SMALL_256K_MODEL = "thinkingmachines/Inkling-Small:peft:262144";
 const INKLING_256K_MODEL = "thinkingmachines/Inkling:peft:262144";
 const DEFAULT_MODEL = INKLING_SMALL_MODEL;
 const COOKBOOK_INSTALL = "uv pip install -U tinker-cookbook";
@@ -44,10 +45,21 @@ function isInklingModel(model?: string): boolean {
   return Boolean(model?.startsWith("thinkingmachines/Inkling"));
 }
 
+function modelContextWindow(model?: string): number | undefined {
+  const peftContext = model?.match(/:peft:(\d+)(?::|$)/)?.[1];
+  if (peftContext) {
+    const parsed = Number(peftContext);
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+  }
+  return isInklingModel(model) ? 65_536 : undefined;
+}
+
 function starterModelChoices(): string[] {
   return [
     `${INKLING_SMALL_MODEL} — default; cheaper Inkling sibling (276B / 12B active)`,
+    `${INKLING_SMALL_256K_MODEL} — Inkling-Small with 256K context`,
     `${INKLING_MODEL} — full Inkling (975B / 41B active)`,
+    `${INKLING_256K_MODEL} — full Inkling with 256K context`,
     "Qwen/Qwen3.5-9B-Base — cheaper small base model",
     "Qwen/Qwen3.5-35B-A3B-Base — stronger Qwen MoE base",
     "Qwen/Qwen3.8-27B — dense hybrid; exportable to self-host",
@@ -145,7 +157,7 @@ function checkpointRegistration(options: {
     baseModel: options.baseModel,
     reasoning: inkling,
     vision: inkling,
-    contextWindow: options.contextWindow ?? (inkling ? 65_536 : 32_768),
+    contextWindow: options.contextWindow ?? modelContextWindow(options.baseModel) ?? 32_768,
     maxTokens: options.maxTokens ?? (inkling ? 16_384 : 4_096),
     addedAt: Date.now(),
   };
@@ -2233,8 +2245,19 @@ export default async function (pi: ExtensionAPI) {
         reasoning: true,
         thinkingLevelMap: inklingThinkingLevels(),
         input: ["text", "image"] as ("text" | "image")[],
-        cost: { input: 0.62, output: 1.56, cacheRead: 0, cacheWrite: 0 },
+        cost: { input: 0.58, output: 1.44, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 65_536,
+        maxTokens: 16_384,
+        compat: inklingCompat(),
+      },
+      {
+        id: INKLING_SMALL_256K_MODEL,
+        name: "Inkling-Small (Tinker, 256K)",
+        reasoning: true,
+        thinkingLevelMap: inklingThinkingLevels(),
+        input: ["text", "image"] as ("text" | "image")[],
+        cost: { input: 1.16, output: 2.89, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 262_144,
         maxTokens: 16_384,
         compat: inklingCompat(),
       },
@@ -2347,8 +2370,9 @@ export default async function (pi: ExtensionAPI) {
             "",
             "## What to pick",
             `- **Default:** \`${INKLING_SMALL_MODEL}\` — 276B total / 12B active. Same renderer, tokenizer, and effort interface as full Inkling. Prefer this for coding, grading, and synthetic data.`,
+            `- **Small 256K:** \`${INKLING_SMALL_256K_MODEL}\` — same efficient model, longer context.`,
             `- **Full:** \`${INKLING_MODEL}\` — 975B total / 41B active.`,
-            "- 256K long-context variant: `thinkingmachines/Inkling:peft:262144`.",
+            `- **Full 256K:** \`${INKLING_256K_MODEL}\`.`,
             "",
             "## What works",
             "- Chat, coding tools, images, audio (via Cookbook sampling scripts), and streamed reasoning.",
@@ -3601,9 +3625,8 @@ export default async function (pi: ExtensionAPI) {
         }
         const alias = String(options.alias ?? positional[1] ?? `tinker-${state.checkpoints.length + 1}`);
         const baseModel = String(options["base-model"] ?? options.model ?? "") || undefined;
-        const inkling = isInklingModel(baseModel);
-        const contextWindow = Number(options.context ?? (inkling ? 65_536 : 32_768));
-        const maxTokens = Number(options["max-tokens"] ?? (inkling ? 16_384 : 4_096));
+        const contextWindow = options.context === undefined ? undefined : Number(options.context);
+        const maxTokens = options["max-tokens"] === undefined ? undefined : Number(options["max-tokens"]);
         state.checkpoints = state.checkpoints.filter((m) => m.id !== checkpoint && m.name !== alias);
         state.checkpoints.push(checkpointRegistration({ id: checkpoint, name: alias, baseModel, contextWindow, maxTokens }));
         await saveState(state);
