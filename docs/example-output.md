@@ -63,7 +63,7 @@ Use this before `smoke`, `small`, or `real` budgets.
 After setting `TINKER_API_KEY`, move up gradually:
 
 ```text
-/tinker improve data.csv --goal "better support answers" --budget smoke --yes
+/tinker improve data.csv --goal "better support answers" --budget smoke --eval-reviewed --yes
 /tinker improve data.csv --goal "better support answers" --budget small --yes
 ```
 

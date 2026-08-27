@@ -52,10 +52,10 @@ Start with CSV, JSON, JSONL, text files, Markdown, or a docs directory:
 /tinker improve data.csv --goal "better customer support answers" --budget demo
 ```
 
-The `demo` budget prepares everything without calling the API. Review the generated files, then run a small smoke test:
+The `demo` budget deterministically holds out task-relevant eval rows, excludes them from training, and prepares everything without calling the API. Review `data/eval.jsonl`, then acknowledge that review when you run a small smoke test:
 
 ```text
-/tinker improve data.csv --goal "better customer support answers" --budget smoke --yes
+/tinker improve data.csv --goal "better customer support answers" --budget smoke --eval-reviewed --yes
 ```
 
 If the smoke run and eval look good:
@@ -67,8 +67,10 @@ If the smoke run and eval look good:
 `pi-tinker` guides you through:
 
 ```text
-data → validation → baseline eval → 2-step smoke run → training → checkpoint eval → chat in Pi
+data → held-out eval → validation → baseline → smoke → training → checkpoint eval → approval → chat/deploy
 ```
+
+It hashes the source, train/eval data, eval code, model, and effort so stale results are never reused. Candidate checkpoints stay separate from approved checkpoints; `deploy latest` only resolves a checkpoint that beat its matching baseline.
 
 ## Setup for fine-tuning
 
@@ -127,7 +129,7 @@ Inkling can spend different amounts of compute thinking. In Pi, Shift+Tab change
 | high | 0.9 |
 | xhigh | 0.99 |
 
-The default fine-tuning and eval effort is `0.9` (`high`). Always compare the base model and trained checkpoint at the same effort.
+When managed improve first uses the API, it scores the held-out eval at several efforts and selects the lowest effort tied for best accuracy. That effort is persisted and used for SFT rendering, baseline evaluation, and checkpoint evaluation. Pass `--effort` to pin one explicitly or `--no-sweep` to keep the current/default value.
 
 To see how effort changes a representative answer:
 
@@ -140,8 +142,8 @@ To see how effort changes a representative answer:
 | Budget | Uses API? | What it does |
 |---|---:|---|
 | `demo` | No | Prepares files, checks setup, and validates data |
-| `smoke` | Yes | Runs a baseline eval and two training steps |
-| `small` | Yes | Runs a short training and compares the checkpoint |
+| `smoke` | Yes | Scores effort, runs baseline + two training steps, then evaluates the smoke checkpoint |
+| `small` | Yes | Scales only after smoke wins, then evaluates and approves/rejects the checkpoint |
 | `real` | Yes | Runs a larger confirmed experiment |
 
 API-using stages require confirmation. In non-interactive commands, `--yes` is the confirmation.

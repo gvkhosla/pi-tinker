@@ -50,7 +50,7 @@ If the user has CSV/JSON/JSONL/docs, prefer the managed operator first:
 Then, only after the user understands API usage and evals:
 
 ```text
-/tinker improve <input> --goal "what should improve" --budget smoke --yes
+/tinker improve <input> --goal "what should improve" --budget smoke --eval-reviewed --yes
 /tinker improve <input> --goal "what should improve" --budget small --yes
 /tinker deploy latest
 ```
@@ -101,7 +101,7 @@ If the user is stuck:
 - Real training requires `TINKER_API_KEY`, Python 3.11+, Tinker SDK 0.23+, torch>=2.10, and `tinker-cookbook` (tml-renderers is a default dep).
 - Prefer `thinkingmachines/Inkling-Small` unless the user asks for full Inkling. Do not train retired Tinker models; check https://tinker-docs.thinkingmachines.ai/tinker/models/.
 - Do not vendor Cookbook research/debug skills. Point agents at `/plugin marketplace add thinking-machines-lab/tinker-cookbook`.
-- Generic Inkling SFT uses the renderer's default `effort=0.9`; baseline and checkpoint eval effort must match.
+- Managed Inkling improve scores the held-out eval across efforts and pins one effort in training rendering, baseline eval, and checkpoint eval. Do not compare mismatched efforts.
 
 ## Development checks
 

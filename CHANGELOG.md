@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.2
+
+Trust patch:
+
+- Added SHA-256 provenance for normalized source data, train/eval data, eval code, model, and Inkling effort. Stale baselines, candidates, and approvals are invalidated automatically.
+- Managed improve now creates a deterministic task-relevant holdout, excludes those rows from training, detects duplicates, and requires `--eval-reviewed` before API usage. `--eval` accepts a separate reviewed eval.
+- Inkling effort is selected by scoring the held-out eval at each effort (lowest effort tied for best accuracy), then pinned in generated SFT rendering, baseline eval, checkpoint eval, state, and `tinker.yaml`.
+- Candidate and approved checkpoints are separate. `deploy latest` resolves only an approved checkpoint; rejected/unevaluated candidates require an explicit URI plus `--force`.
+- Expanded local integration coverage for provenance invalidation, held-out generation, effort-capable Python, and approved-only deployment.
+
 ## 0.9.1
 
 One front door, fail closed:

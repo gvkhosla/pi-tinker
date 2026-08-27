@@ -72,7 +72,48 @@ async function main() {
     assert(existsSync(path.join(tmp, "train_sft.py")), "/tinker new did not create train_sft.py");
     pi(["-p", "/tinker doctor data/train.jsonl"], { cwd: tmp });
     pi(["-p", "/tinker improve support.csv --goal support-quality --budget demo --force"], { cwd: tmp });
-    assert(existsSync(path.join(tmp, ".tinker-pi", "state.json")), "/tinker improve demo did not create wizard state");
+    const wizardPath = path.join(tmp, ".tinker-pi", "state.json");
+    assert(existsSync(wizardPath), "/tinker improve demo did not create wizard state");
+    let wizard = JSON.parse(readFileSync(wizardPath, "utf8"));
+    assert(wizard.sourceDataHash && wizard.trainingDataHash && wizard.evalDataHash, "improve did not persist data provenance hashes");
+    const heldout = readFileSync(path.join(tmp, "data", "eval.jsonl"), "utf8");
+    assert((heldout.includes("cancel") || heldout.includes("order")) && !heldout.includes("Rewrite this to be concise"), "improve did not create a task-relevant held-out eval");
+    assert(readFileSync(path.join(tmp, "train_sft.py"), "utf8").includes("EffortConversationFileBuilder"), "generated training script cannot pin Inkling effort");
+
+    // Changing source data must invalidate stale baselines, candidates, and approvals.
+    writeFileSync(wizardPath, JSON.stringify({
+      ...wizard,
+      baselineResult: path.join(tmp, "eval_results", "baseline.json"),
+      baselineFingerprint: "stale",
+      candidateCheckpointPath: "tinker://pi-tinker-test/sampler_weights/rejected",
+      candidateResult: path.join(tmp, "eval_results", "candidate.json"),
+      candidateDecision: "approved",
+      approvedCheckpointPath: "tinker://pi-tinker-test/sampler_weights/rejected",
+      registeredModel: "stale-model",
+    }, null, 2));
+    writeFileSync(path.join(tmp, "support.csv"), "question,answer\nWhere do I cancel?,Go to Settings then Billing.\nMy order is late,Send us your order number.\nHow do I reset my password?,Open Settings then Security.\nCan I export invoices?,Open Billing then Invoices.\nWhere is dark mode?,Open Settings then Appearance.\n");
+    pi(["-p", "/tinker improve support.csv --goal support-quality --budget demo --force"], { cwd: tmp });
+    wizard = JSON.parse(readFileSync(wizardPath, "utf8"));
+    assert(!wizard.baselineResult && !wizard.candidateCheckpointPath && !wizard.approvedCheckpointPath && !wizard.registeredModel, "changed source data did not invalidate stale run state");
+
+    // latest is approved-only, and explicit rejected candidates require --force.
+    const latestBlocked = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "deploy", "latest"], { cwd: tmp });
+    assert(latestBlocked.includes("No approved checkpoint"), "deploy latest did not fail closed without approval");
+    wizard.candidateCheckpointPath = "tinker://pi-tinker-test/sampler_weights/rejected";
+    wizard.candidateDecision = "rejected";
+    writeFileSync(wizardPath, JSON.stringify(wizard, null, 2));
+    const rejectedBlocked = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "deploy", "tinker://pi-tinker-test/sampler_weights/rejected"], { cwd: tmp });
+    assert(rejectedBlocked.includes("deploy blocked") || rejectedBlocked.includes("rejected or unevaluated"), "explicit rejected checkpoint was deployable without --force");
+    wizard.approvedCheckpointPath = "tinker://pi-tinker-test/sampler_weights/approved";
+    wizard.candidateCheckpointPath = wizard.approvedCheckpointPath;
+    wizard.candidateDecision = "approved";
+    wizard.approvedFingerprint = "stale";
+    writeFileSync(wizardPath, JSON.stringify(wizard, null, 2));
+    const staleApproved = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "deploy", "latest"], { cwd: tmp });
+    assert(staleApproved.includes("provenance is stale"), "deploy latest did not reject stale approved provenance");
+    pi(["-p", "/tinker deploy latest --out deploy/approved --force"], { cwd: tmp });
+    assert(readFileSync(path.join(tmp, "deploy", "approved", ".env.example"), "utf8").includes("sampler_weights/approved"), "deploy latest did not resolve the approved checkpoint");
+
     pi(["-p", "/tinker deploy tinker://pi-tinker-test/sampler_weights/000003 pi-tinker-deploy --force"], { cwd: tmp });
     const deployDir = path.join(tmp, "deploy", "pi-tinker-deploy");
     assert(existsSync(path.join(deployDir, "python_client.py")), "/tinker deploy did not create python_client.py");

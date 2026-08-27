@@ -23,7 +23,7 @@ Confirm the doctor report is clean enough to proceed.
 ## 3. Run the smoke budget
 
 ```text
-/tinker improve examples/customer-support.csv --goal "better concise customer support answers" --budget smoke --yes
+/tinker improve examples/customer-support.csv --goal "better concise customer support answers" --budget smoke --eval-reviewed --yes
 ```
 
 Expected result:

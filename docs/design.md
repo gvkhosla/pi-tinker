@@ -15,7 +15,7 @@ Adding another framework inside Pi would make the user experience worse. Pi shou
 - direct Inkling registration through Tinker's Anthropic-compatible endpoint,
 - effort mapping and representative-task sweeps for Inkling,
 - discovery: thin Pi skills that point at official Cookbook research/debug/inkling skills,
-- a beginner step-by-step wizard (`/tinker start`, `/tinker next`, `/tinker reset`),
+- one beginner front door (`/tinker improve`) plus one state-aware next command,
 - setup checks,
 - JSONL plus Python-backed renderer/token-mask validation,
 - guided project initialization,
@@ -47,19 +47,15 @@ Tinker/Tinker Cookbook handle:
 ## Ideal user flow
 
 ```text
-/tinker inkling
-/tinker inkling sweep --prompt "representative task" --efforts low,medium,high,xhigh --yes
-/tinker start data/train.jsonl --model thinkingmachines/Inkling
+/tinker improve data.csv --goal "what should improve" --budget demo
+# Review data/train.jsonl, data/eval.jsonl, train_sft.py, and eval.py.
 /tinker next
-/tinker setup
-/tinker init data/train.jsonl --model thinkingmachines/Inkling
-/tinker validate data/train.jsonl --model thinkingmachines/Inkling
-/tinker eval init
-/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9
-/skill:tinker-research plan my eval before scaling
-/tinker smoke train_sft.py
-/tinker monitor logs/run
-/tinker checkpoints logs/run
+/tinker improve data.csv --goal "what should improve" --budget smoke --eval-reviewed --yes
+/tinker next
+/tinker improve data.csv --goal "what should improve" --budget small --yes
+/tinker deploy latest
 ```
+
+Managed runs hash their source/train/eval/code/model/effort provenance. A checkpoint is only approved when it beats the matching baseline; `deploy latest` never resolves a rejected candidate. Inkling training and both evals use the same persisted effort.
 
 The user can always open and edit the generated Python.

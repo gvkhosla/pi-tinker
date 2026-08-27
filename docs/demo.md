@@ -71,7 +71,7 @@ Then validate and run only two training steps:
 
 ```text
 /tinker validate data/train.jsonl
-/tinker improve data.csv --goal "better support answers" --budget smoke --yes
+/tinker improve data.csv --goal "better support answers" --budget smoke --eval-reviewed --yes
 ```
 
 The `smoke` budget uses the Tinker API. Review the command before adding `--yes`.

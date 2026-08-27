@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { execFile as execFileCb } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -740,7 +741,109 @@ function makeSftScript(options: {
   testSize: string;
   maxLength: string;
 }) {
-  return `import asyncio\nimport sys\n\nimport chz\n\nfrom tinker_cookbook import cli_utils, model_info\nfrom tinker_cookbook.renderers import TrainOnWhat\nfrom tinker_cookbook.supervised import train\nfrom tinker_cookbook.supervised.data import FromConversationFileBuilder\nfrom tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig\n\n\ndef build_config_blueprint() -> chz.Blueprint[train.Config]:\n    model_name = ${JSON.stringify(options.model)}\n    renderer_name = model_info.get_recommended_renderer_name(model_name)\n\n    common_config = ChatDatasetBuilderCommonConfig(\n        model_name_for_tokenizer=model_name,\n        renderer_name=renderer_name,\n        max_length=${options.maxLength},\n        batch_size=${options.batchSize},\n        train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES,\n    )\n\n    dataset = FromConversationFileBuilder(\n        common_config=common_config,\n        file_path=${JSON.stringify(options.dataFile)},\n        test_size=${options.testSize},\n        shuffle_seed=0,\n    )\n\n    return chz.Blueprint(train.Config).apply({\n        "log_path": ${JSON.stringify(options.logPath)},\n        "model_name": model_name,\n        "recipe_name": "pi_tinker_sft",\n        "renderer_name": renderer_name,\n        "dataset_builder": dataset,\n        "learning_rate": ${options.learningRate},\n        "lr_schedule": "linear",\n        "num_epochs": 1,\n        "lora_rank": 32,\n        "save_every": 20,\n        "eval_every": 10,\n        "max_steps": ${options.maxSteps},\n    })\n\n\ndef main(config: train.Config):\n    print("Resolved Tinker SFT config:")\n    print(config)\n    cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")\n    asyncio.run(train.main(config))\n\n\nif __name__ == "__main__":\n    blueprint = build_config_blueprint()\n    blueprint.make_from_argv(sys.argv[1:])\n    main(blueprint.make())\n`;
+  return `import asyncio
+import sys
+
+import chz
+
+from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook.renderers import TrainOnWhat
+from tinker_cookbook.supervised import train
+from tinker_cookbook.supervised.data import FromConversationFileBuilder
+from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
+
+
+class _EffortRenderer:
+    """Pins Inkling SFT rendering to the same effort used by evals."""
+
+    def __init__(self, renderer, effort: float):
+        self._renderer = renderer
+        self._effort = effort
+
+    def __getattr__(self, name):
+        return getattr(self._renderer, name)
+
+    def build_supervised_example(self, messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES):
+        return self._renderer.build_supervised_example(
+            messages, train_on_what=train_on_what, effort=self._effort
+        )
+
+
+@chz.chz
+class EffortConversationFileBuilder(FromConversationFileBuilder):
+    effort: float = 0.9
+
+    @property
+    def renderer(self):
+        renderer = super().renderer
+        if self.common_config.model_name_for_tokenizer.startswith("thinkingmachines/Inkling"):
+            return _EffortRenderer(renderer, self.effort)
+        return renderer
+
+
+def _training_effort(argv: list[str]) -> tuple[float, list[str]]:
+    effort = 0.9
+    remaining = []
+    for arg in argv:
+        if arg.startswith("effort="):
+            effort = float(arg.split("=", 1)[1])
+        else:
+            remaining.append(arg)
+    if not 0.0 <= effort < 1.0:
+        raise SystemExit("effort must be in [0, 1)")
+    return effort, remaining
+
+
+def build_config_blueprint(effort: float = 0.9) -> chz.Blueprint[train.Config]:
+    model_name = ${JSON.stringify(options.model)}
+    renderer_name = model_info.get_recommended_renderer_name(model_name)
+
+    common_config = ChatDatasetBuilderCommonConfig(
+        model_name_for_tokenizer=model_name,
+        renderer_name=renderer_name,
+        max_length=${options.maxLength},
+        batch_size=${options.batchSize},
+        train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES,
+    )
+
+    dataset = EffortConversationFileBuilder(
+        common_config=common_config,
+        file_path=${JSON.stringify(options.dataFile)},
+        test_size=${options.testSize},
+        shuffle_seed=0,
+        effort=effort,
+    )
+
+    return chz.Blueprint(train.Config).apply({
+        "log_path": ${JSON.stringify(options.logPath)},
+        "model_name": model_name,
+        "recipe_name": "pi_tinker_sft",
+        "renderer_name": renderer_name,
+        "dataset_builder": dataset,
+        "learning_rate": ${options.learningRate},
+        "lr_schedule": "linear",
+        "num_epochs": 1,
+        "lora_rank": 32,
+        "save_every": 20,
+        "eval_every": 10,
+        "max_steps": ${options.maxSteps},
+    })
+
+
+def main(config: train.Config):
+    print("Resolved Tinker SFT config:")
+    print(config)
+    cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
+    asyncio.run(train.main(config))
+
+
+if __name__ == "__main__":
+    effort, argv = _training_effort(sys.argv[1:])
+    print(f"Pinned training effort: {effort}")
+    blueprint = build_config_blueprint(effort)
+    blueprint.make_from_argv(argv)
+    main(blueprint.make())
+`;
 }
 
 function makeEvalScript() {
@@ -748,7 +851,7 @@ function makeEvalScript() {
 }
 
 function makeProjectReadme(options: { model: string; dataFile: string; logPath: string; successMetric: string }) {
-  return `# Tinker fine-tuning project\n\nThis project was scaffolded by \`pi-tinker\`. The important files are normal editable Python, not hidden framework state.\n\n## Goal\n\nFine-tune \`${options.model}\` on:\n\n\`${options.dataFile}\`\n\n## Success metric\n\n${options.successMetric || "Define this before scaling beyond a smoke test."}\n\n## Smoke test\n\n\`\`\`bash\n${COOKBOOK_INSTALL}\npython train_sft.py max_steps=2\n\`\`\`\n\n${isInklingModel(options.model) ? "Inkling uses its recommended TMLv0 renderer automatically. This generic SFT scaffold trains at the renderer default effort, 0.9 (high). Run `/tinker inkling sweep` before training and use the same effort for baseline and checkpoint evals.\n\n" : ""}## Monitor\n\nInside Pi:\n\n\`\`\`text\n/tinker monitor ${options.logPath}\n/tinker status ${options.logPath}\n/tinker checkpoints ${options.logPath}\n\`\`\`\n\n## Scale up\n\nOnly scale after checking:\n\n- JSONL validation passed\n- renderer/token validation passed\n- smoke test produced metrics\n- decoded examples look correct\n- success metric/eval is defined\n\n\`\`\`bash\npython train_sft.py max_steps=100\n\`\`\`\n\n## Chat with a checkpoint in Pi\n\nAfter a sampler checkpoint appears in \`checkpoints.jsonl\`:\n\n\`\`\`text\n/tinker checkpoints ${options.logPath}\n/model\n\`\`\`\n`;
+  return `# Tinker fine-tuning project\n\nThis project was scaffolded by \`pi-tinker\`. The important files are normal editable Python, not hidden framework state.\n\n## Goal\n\nFine-tune \`${options.model}\` on:\n\n\`${options.dataFile}\`\n\n## Success metric\n\n${options.successMetric || "Define this before scaling beyond a smoke test."}\n\n## Smoke test\n\n\`\`\`bash\n${COOKBOOK_INSTALL}\npython train_sft.py max_steps=2\n\`\`\`\n\n${isInklingModel(options.model) ? "Inkling uses its recommended TMLv0 renderer automatically. This scaffold accepts `effort=<float>` and renders SFT examples at that effort; managed improve pins the same value for training, baseline, and checkpoint evals.\n\n" : ""}## Monitor\n\nInside Pi:\n\n\`\`\`text\n/tinker monitor ${options.logPath}\n/tinker status ${options.logPath}\n/tinker checkpoints ${options.logPath}\n\`\`\`\n\n## Scale up\n\nOnly scale after checking:\n\n- JSONL validation passed\n- renderer/token validation passed\n- smoke test produced metrics\n- decoded examples look correct\n- success metric/eval is defined\n\n\`\`\`bash\npython train_sft.py max_steps=100\n\`\`\`\n\n## Chat with a checkpoint in Pi\n\nAfter a sampler checkpoint appears in \`checkpoints.jsonl\`:\n\n\`\`\`text\n/tinker checkpoints ${options.logPath}\n/model\n\`\`\`\n`;
 }
 
 function makeExampleEvalJsonl() {
@@ -899,6 +1002,127 @@ function rowToTrainingExample(row: Record<string, unknown>): Record<string, unkn
   messages.push({ role: "user", content: input });
   messages.push({ role: "assistant", content: output });
   return { messages };
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function hashFile(filePath?: string): string | undefined {
+  return filePath && existsSync(filePath) ? sha256(readFileSync(filePath)) : undefined;
+}
+
+function normalizedJsonlHash(filePath: string): string {
+  const rows = readFileSync(filePath, "utf8").split(/\n/).filter((line) => line.trim()).map((line) => JSON.parse(line) as Record<string, unknown>);
+  return sha256(jsonl(rows));
+}
+
+function provenanceFingerprint(parts: Record<string, unknown>): string {
+  return sha256(JSON.stringify(parts, Object.keys(parts).sort()));
+}
+
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content.map((part) => part && typeof part === "object" && "text" in part ? String((part as { text?: unknown }).text ?? "") : "").join("\n").trim();
+  }
+  return "";
+}
+
+function trainingRowToEval(row: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!Array.isArray(row.messages)) return undefined;
+  const messages = row.messages as Array<Record<string, unknown>>;
+  let assistantIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "assistant" && messageText(messages[i]?.content)) {
+      assistantIndex = i;
+      break;
+    }
+  }
+  if (assistantIndex <= 0) return undefined;
+  const expected = messageText(messages[assistantIndex]?.content);
+  return {
+    messages: messages.slice(0, assistantIndex),
+    expected,
+    match: "exact",
+    notes: "Auto-held-out target. Review the prompt, expected answer, and matcher before API usage.",
+  };
+}
+
+type ManagedDataResult = {
+  sourceFile: string;
+  trainFile: string;
+  evalFile: string;
+  sourceHash: string;
+  trainingHash: string;
+  evalHash: string;
+  sourceRows: number;
+  trainRows: number;
+  evalRows: number;
+  evalGenerated: boolean;
+  warnings: string[];
+};
+
+async function writeManagedDataFiles(options: {
+  cwd: string;
+  normalizedSource: string;
+  evalOverride?: string;
+  preserveGeneratedEval?: boolean;
+}): Promise<ManagedDataResult> {
+  const warnings: string[] = [];
+  const rows = readFileSync(options.normalizedSource, "utf8").split(/\n/).filter((line) => line.trim()).map((line) => JSON.parse(line) as Record<string, unknown>);
+  if (!rows.length) throw new Error("No usable source rows found.");
+  const sourceFile = path.join(options.cwd, ".tinker-pi", "source.jsonl");
+  const trainFile = path.join(options.cwd, "data", "train.jsonl");
+  const evalFile = path.join(options.cwd, "data", "eval.jsonl");
+  await mkdir(path.dirname(sourceFile), { recursive: true });
+  await mkdir(path.dirname(trainFile), { recursive: true });
+  await writeFile(sourceFile, jsonl(rows));
+
+  let trainRows = rows;
+  let evalRows: Array<Record<string, unknown>> = [];
+  let evalGenerated = false;
+  if (options.evalOverride) {
+    const evalText = readFileSync(options.evalOverride, "utf8");
+    evalRows = evalText.split(/\n/).filter((line) => line.trim()).map((line) => JSON.parse(line) as Record<string, unknown>);
+    await writeFile(evalFile, jsonl(evalRows));
+  } else {
+    evalGenerated = true;
+    const ranked = rows.map((row, index) => ({ row, index, rank: sha256(JSON.stringify(row)) })).sort((a, b) => a.rank.localeCompare(b.rank));
+    const evalCount = rows.length >= 10 ? Math.min(50, Math.max(2, Math.floor(rows.length * 0.2))) : rows.length >= 4 ? 2 : rows.length >= 2 ? 1 : 0;
+    const heldoutIndexes = new Set(ranked.slice(0, evalCount).map((item) => item.index));
+    trainRows = rows.filter((_row, index) => !heldoutIndexes.has(index));
+    evalRows = ranked.slice(0, evalCount).map((item) => trainingRowToEval(item.row)).filter((row): row is Record<string, unknown> => Boolean(row));
+    if (options.preserveGeneratedEval && existsSync(evalFile)) {
+      evalRows = readFileSync(evalFile, "utf8").split(/\n/).filter((line) => line.trim()).map((line) => JSON.parse(line) as Record<string, unknown>);
+    } else {
+      await writeFile(evalFile, evalRows.length ? jsonl(evalRows) : "");
+    }
+    warnings.push(`Held out ${evalRows.length} of ${rows.length} rows deterministically; held-out rows are excluded from training.`);
+    warnings.push("Auto-generated evals use exact matching. Review `data/eval.jsonl` and acknowledge it with `--eval-reviewed` before API usage.");
+  }
+  await writeFile(trainFile, jsonl(trainRows));
+  const duplicateCount = rows.length - new Set(rows.map((row) => sha256(JSON.stringify(row)))).size;
+  if (duplicateCount) warnings.push(`${duplicateCount} duplicate source row(s) detected; remove them before a serious run.`);
+  if (options.evalOverride) {
+    const trainPrompts = new Set(trainRows.map((row) => JSON.stringify(Array.isArray(row.messages) ? row.messages.filter((message: any) => message?.role !== "assistant") : [])));
+    const leaked = evalRows.filter((row) => trainPrompts.has(JSON.stringify(Array.isArray(row.messages) ? row.messages.filter((message: any) => message?.role !== "assistant") : []))).length;
+    if (leaked) warnings.push(`${leaked} eval prompt(s) also appear in training data. Remove leakage before trusting the comparison.`);
+  }
+  if (evalRows.length < 2) warnings.push("Fewer than 2 eval rows: demo setup is allowed, but API-using improve stages will stop.");
+  return {
+    sourceFile,
+    trainFile,
+    evalFile,
+    sourceHash: hashFile(sourceFile)!,
+    trainingHash: hashFile(trainFile)!,
+    evalHash: hashFile(evalFile)!,
+    sourceRows: rows.length,
+    trainRows: trainRows.length,
+    evalRows: evalRows.length,
+    evalGenerated,
+    warnings,
+  };
 }
 
 function collectTextFiles(dir: string): string[] {
@@ -1471,11 +1695,11 @@ async function writeDeployFiles(cwd: string, options: { checkpoint: string; alia
 
 function resolveCheckpointRef(input: string | undefined, state: TinkerState, wizard?: WizardState): { checkpoint?: string; alias: string; baseModel?: string } {
   if (!input || input === "latest") {
-    const latest = state.checkpoints.slice(-1)[0];
+    const latest = wizard ? undefined : state.checkpoints.slice(-1)[0];
     return {
-      checkpoint: wizard?.checkpointPath ?? latest?.id,
+      checkpoint: wizard?.approvedCheckpointPath ?? latest?.id,
       alias: wizard?.registeredModel ?? latest?.name ?? "my-finetune",
-      baseModel: latest?.baseModel ?? wizard?.model,
+      baseModel: wizard?.model ?? latest?.baseModel,
     };
   }
   const byAlias = state.checkpoints.find((m) => m.name === input || m.id === input);
@@ -1709,21 +1933,47 @@ type WizardState = {
   version: 1;
   createdAt: number;
   updatedAt: number;
+  sourceDataFile?: string;
+  sourceDataFileInput?: string;
+  sourceDataHash?: string;
   dataFile?: string;
   dataFileInput?: string;
+  trainingDataHash?: string;
+  evalDataHash?: string;
+  evalGenerated?: boolean;
+  evalReviewedHash?: string;
   model?: string;
   metric?: string;
   logPath?: string;
   validationAt?: number;
   baselineResult?: string;
+  baselineFingerprint?: string;
   smokeAt?: number;
   smokeLogDir?: string;
   checkpointPath?: string;
+  candidateCheckpointPath?: string;
   candidateResult?: string;
+  candidateFingerprint?: string;
+  candidateDecision?: "approved" | "rejected";
+  approvedCheckpointPath?: string;
+  approvedResult?: string;
+  approvedFingerprint?: string;
+  approvedAt?: number;
   registeredModel?: string;
   effort?: number;
   effortSweepAt?: number;
+  effortSweepFingerprint?: string;
 };
+
+function wizardRunFingerprint(cwd: string, state: WizardState): string {
+  return provenanceFingerprint({
+    data: hashFile(state.dataFile),
+    effort: state.effort,
+    eval: hashFile(path.join(cwd, "data", "eval.jsonl")),
+    evalScript: hashFile(path.join(cwd, "eval.py")),
+    model: state.model,
+  });
+}
 
 function evalBeatBaseline(baselinePath: string, candidatePath: string): {
   ok: boolean;
@@ -1736,44 +1986,29 @@ function evalBeatBaseline(baselinePath: string, candidatePath: string): {
   return { ok: candidate > baseline, delta: candidate - baseline, baseline, candidate };
 }
 
-function firstEvalUserPrompt(evalFile: string): string | undefined {
-  if (!existsSync(evalFile)) return undefined;
-  for (const line of readFileSync(evalFile, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const row = JSON.parse(line) as { messages?: Array<{ role?: string; content?: unknown }> };
-      const user = row.messages?.find((m) => m.role === "user");
-      const text = typeof user?.content === "string" ? user.content.trim() : "";
-      if (text) return text;
-    } catch {
-      /* skip bad rows */
-    }
-  }
-  return undefined;
-}
-
 function nextImproveCommand(cwd: string, state: WizardState): string {
-  const data = state.dataFileInput || (state.dataFile ? rel(cwd, state.dataFile) : "data/train.jsonl");
+  const data = state.sourceDataFileInput || state.dataFileInput || (state.sourceDataFile ? rel(cwd, state.sourceDataFile) : state.dataFile ? rel(cwd, state.dataFile) : "data/train.jsonl");
   const model = state.model ?? DEFAULT_MODEL;
   const goal = state.metric ?? "what should improve";
-  const effort = isInklingModel(model) ? ` --effort ${state.effort ?? 0.9}` : "";
-  const flags = ` --goal ${JSON.stringify(goal)} --model ${model}${effort}`;
+  const effort = isInklingModel(model) && state.effort !== undefined ? ` --effort ${state.effort}` : "";
+  const review = state.evalGenerated && state.evalReviewedHash !== state.evalDataHash ? " --eval-reviewed" : "";
+  const flags = ` --goal ${JSON.stringify(goal)} --model ${model}${effort}${review}`;
   if (!state.dataFile || !existsSync(state.dataFile)) {
     return `/tinker improve ${data} --budget demo${flags}`;
   }
   if (!state.smokeAt) {
     return `/tinker improve ${data} --budget smoke --yes${flags}`;
   }
-  if (state.baselineResult && state.candidateResult && existsSync(state.baselineResult) && existsSync(state.candidateResult)) {
+  if (state.candidateDecision === "rejected" && state.baselineResult && state.candidateResult) {
     try {
       const cmp = evalBeatBaseline(state.baselineResult, state.candidateResult);
-      if (!cmp.ok) {
-        return `/tinker improve ${data} --budget smoke --yes${flags}\n# checkpoint did not beat baseline (${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%). Add eval-like examples, then re-run smoke. Pass --force to ignore.`;
-      }
-      return `/tinker deploy ${state.registeredModel ?? "latest"}`;
+      return `/tinker improve ${data} --budget smoke --yes${flags}\n# checkpoint was rejected (${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%). Add eval-like examples, then re-run smoke.`;
     } catch {
-      /* fall through */
+      return `/tinker improve ${data} --budget smoke --yes${flags}`;
     }
+  }
+  if (state.candidateDecision === "approved" && state.approvedCheckpointPath && state.approvedCheckpointPath === state.candidateCheckpointPath) {
+    return `/tinker deploy ${state.registeredModel ?? "latest"}`;
   }
   return `/tinker improve ${data} --budget small --yes${flags}`;
 }
@@ -1956,10 +2191,9 @@ async function createWizardFiles(cwd: string, state: WizardState, force = false)
   const logPath = state.logPath ?? `logs/sft-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
   const files = [
     { rel: "README.md", content: makeProjectReadme({ model, dataFile: state.dataFile, logPath, successMetric: state.metric ?? "Define before scaling." }) },
-    { rel: "train_sft.py", content: makeSftScript({ dataFile: state.dataFile, model, logPath, maxSteps: "20", batchSize: "8", learningRate: "2e-4", testSize: "0", maxLength: "32768" }) },
+    { rel: "train_sft.py", content: makeSftScript({ dataFile: state.dataFile, model, logPath, maxSteps: "20", batchSize: String(Math.min(8, Math.max(1, readJsonl(state.dataFile).length))), learningRate: "2e-4", testSize: "0", maxLength: "32768" }) },
     { rel: "eval_checkpoint.py", content: makeEvalScript() },
     { rel: "eval.py", content: makeExactEvalScript() },
-    { rel: path.join("data", "eval.jsonl"), content: makeExampleEvalJsonl() },
     { rel: "tinker.yaml", content: `task: sft\ndata: ${state.dataFile}\nmodel: ${model}\nlog_path: ${logPath}\nmax_steps: 20\nbatch_size: 8\nlearning_rate: 2e-4\nsuccess_metric: ${state.metric ?? ""}\n${isInklingModel(model) ? `effort: ${state.effort ?? 0.9}\n` : ""}` },
     { rel: path.join("notes", "plan.md"), content: `# Fine-tuning plan\n\n## Goal\n\n${state.metric ?? "Define what should improve."}\n\n## Next\n\n\`/tinker next\` prints one command. The front door is \`/tinker improve\`.\n` },
   ];
@@ -2090,7 +2324,7 @@ export default async function (pi: ExtensionAPI) {
           "- `/tinker inkling` — Inkling-Small vs Inkling, effort, `/model`.",
           "",
           "## Then, with `--yes`",
-          "- `/tinker improve --budget smoke --yes` — baseline + 2-step train + checkpoint eval. Stops if the checkpoint is not better.",
+          "- `/tinker improve --budget smoke --eval-reviewed --yes` — review holdout, select effort, baseline + 2-step train + checkpoint eval.",
           "- `/tinker improve --budget small --yes` — short training only if smoke beat baseline.",
           "- `/tinker monitor <log_dir>` — watch metrics.",
           "- `/tinker deploy latest` — Tinker API snippets + export/serving plan.",
@@ -2399,13 +2633,14 @@ export default async function (pi: ExtensionAPI) {
 
         const force = options.force === true;
         const yes = options.yes === true;
-        const model = String(options.model ?? DEFAULT_MODEL);
-        const metric = String(options.goal ?? options.metric ?? "Improve task quality on held-out examples.");
-        const steps = budgetMaxSteps(budget, options.steps ?? options.max_steps);
         const existingWizard = await readWizardState(ctx.cwd);
+        const model = String(options.model ?? existingWizard?.model ?? DEFAULT_MODEL);
+        let metric = String(options.goal ?? options.metric ?? existingWizard?.metric ?? "Improve task quality on held-out examples.");
+        const steps = budgetMaxSteps(budget, options.steps ?? options.max_steps);
         const exampleSlug = options.example === true ? "customer-support" : options.example ? String(options.example) : "";
-        let dataFileInput = positional[0] ? String(positional[0]) : existingWizard?.dataFileInput ?? existingWizard?.dataFile ?? "";
+        let dataFileInput = positional[0] ? String(positional[0]) : existingWizard?.sourceDataFileInput ?? existingWizard?.dataFileInput ?? existingWizard?.sourceDataFile ?? existingWizard?.dataFile ?? "";
         let dataFile = dataFileInput ? path.resolve(ctx.cwd, dataFileInput) : "";
+        let evalOverride = options.eval ? path.resolve(ctx.cwd, String(options.eval)) : undefined;
         const sections: string[] = [managedRunPlan(budget)];
 
         try {
@@ -2413,6 +2648,8 @@ export default async function (pi: ExtensionAPI) {
             const result = await writeExampleTemplate(ctx.cwd, exampleSlug, force);
             dataFileInput = path.join("examples", result.template.slug, "train.jsonl");
             dataFile = path.resolve(ctx.cwd, dataFileInput);
+            evalOverride = path.resolve(ctx.cwd, "examples", result.template.slug, "eval.jsonl");
+            if (options.goal === undefined && options.metric === undefined) metric = result.template.goal;
             sections.push(`## Example\nCopied \`${result.template.title}\` to \`${dataFileInput}\`.`);
           }
           if (isRetiredModel(model) && !force) {
@@ -2440,37 +2677,82 @@ export default async function (pi: ExtensionAPI) {
             return;
           }
 
+          let normalizedSource = dataFile;
           if (!/\.jsonl$/i.test(dataFile) || options.prepare === true) {
-            const prepared = await prepareDataset(dataFile, path.resolve(ctx.cwd, String(options.out ?? "data/train.jsonl")));
-            dataFile = prepared.outFile;
-            dataFileInput = rel(ctx.cwd, prepared.outFile);
-            sections.push(`## Data prepared\nConverted \`${rel(ctx.cwd, prepared.inputPath)}\` (${prepared.format}) to \`${rel(ctx.cwd, prepared.outFile)}\` with ${prepared.rows} rows.`);
+            const prepared = await prepareDataset(dataFile, path.resolve(ctx.cwd, ".tinker-pi", "normalized-input.jsonl"));
+            normalizedSource = prepared.outFile;
+            sections.push(`## Data prepared\nConverted \`${rel(ctx.cwd, prepared.inputPath)}\` (${prepared.format}) into ${prepared.rows} normalized conversation rows.`);
             if (prepared.warnings.length) sections.push(`## Data preparation warnings\n${prepared.warnings.map((w) => `- ${w}`).join("\n")}`);
           } else {
-            sections.push(`## Data selected\nUsing \`${rel(ctx.cwd, dataFile)}\`.`);
+            sections.push(`## Data selected\nUsing \`${rel(ctx.cwd, dataFile)}\` as the source.`);
           }
+          if (evalOverride && !existsSync(evalOverride)) throw new Error(`Eval file not found: ${evalOverride}`);
 
-          const stateForRun: WizardState = existingWizard ?? {
+          const normalizedSourceHash = normalizedJsonlHash(normalizedSource);
+          const sourceUnchanged = existingWizard?.sourceDataHash === normalizedSourceHash;
+          const preserveGeneratedEval = !force && sourceUnchanged && existingWizard?.evalGenerated === true && existsSync(path.join(ctx.cwd, "data", "eval.jsonl"));
+          const managed = await writeManagedDataFiles({ cwd: ctx.cwd, normalizedSource, evalOverride, preserveGeneratedEval });
+          dataFile = managed.trainFile;
+          const sourceInputResolved = path.resolve(ctx.cwd, dataFileInput);
+          const sourceDataFileInput = sourceInputResolved === managed.trainFile ? rel(ctx.cwd, managed.sourceFile) : dataFileInput;
+          dataFileInput = rel(ctx.cwd, managed.trainFile);
+          sections.push(`## Held-out data\n- Source: ${managed.sourceRows} rows\n- Training: ${managed.trainRows} rows in \`${dataFileInput}\`\n- Eval: ${managed.evalRows} rows in \`${rel(ctx.cwd, managed.evalFile)}\`\n${managed.warnings.map((warning) => `- ${warning}`).join("\n")}`);
+
+          const stateForRun: WizardState = existingWizard ? { ...existingWizard } : {
             version: 1,
             createdAt: Date.now(),
             updatedAt: Date.now(),
-            dataFile,
-            dataFileInput,
-            model,
-            metric,
-            logPath: String(options.log ?? `logs/sft-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`),
           };
-          stateForRun.dataFile = dataFile;
+          const modelChanged = Boolean(existingWizard?.model && existingWizard.model !== model);
+          const effortChanged = options.effort !== undefined && Number(options.effort) !== existingWizard?.effort;
+          const artifactsChanged = Boolean(existingWizard && (
+            existingWizard.sourceDataHash !== managed.sourceHash ||
+            existingWizard.trainingDataHash !== managed.trainingHash ||
+            existingWizard.evalDataHash !== managed.evalHash ||
+            modelChanged ||
+            effortChanged
+          ));
+          if (artifactsChanged) {
+            Object.assign(stateForRun, {
+              validationAt: undefined,
+              baselineResult: undefined,
+              baselineFingerprint: undefined,
+              smokeAt: undefined,
+              smokeLogDir: undefined,
+              checkpointPath: undefined,
+              candidateCheckpointPath: undefined,
+              candidateResult: undefined,
+              candidateFingerprint: undefined,
+              candidateDecision: undefined,
+              approvedCheckpointPath: undefined,
+              approvedResult: undefined,
+              approvedFingerprint: undefined,
+              approvedAt: undefined,
+              registeredModel: undefined,
+              effortSweepAt: undefined,
+              effortSweepFingerprint: undefined,
+            });
+            sections.push("## Prior results invalidated\nThe source data, held-out eval, or model changed. Old baseline, checkpoint, and approval state will not be reused.");
+          }
+          stateForRun.sourceDataFile = managed.sourceFile;
+          stateForRun.sourceDataFileInput = sourceDataFileInput;
+          stateForRun.sourceDataHash = managed.sourceHash;
+          stateForRun.dataFile = managed.trainFile;
           stateForRun.dataFileInput = dataFileInput;
-          stateForRun.model = String(options.model ?? stateForRun.model ?? model);
-          stateForRun.metric = String(options.goal ?? options.metric ?? stateForRun.metric ?? metric);
-          stateForRun.logPath = String(options.log ?? stateForRun.logPath ?? `logs/sft-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`);
+          stateForRun.trainingDataHash = managed.trainingHash;
+          stateForRun.evalDataHash = managed.evalHash;
+          stateForRun.evalGenerated = managed.evalGenerated;
+          stateForRun.evalReviewedHash = evalOverride ? managed.evalHash : options["eval-reviewed"] === true ? managed.evalHash : (stateForRun.evalReviewedHash === managed.evalHash ? managed.evalHash : undefined);
+          stateForRun.model = model;
+          stateForRun.metric = metric;
+          stateForRun.logPath = String(options.log ?? (artifactsChanged ? undefined : stateForRun.logPath) ?? `logs/sft-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`);
           await writeWizardState(ctx.cwd, stateForRun);
           const written = await createWizardFiles(ctx.cwd, stateForRun, force);
           sections.push(written.length ? `## Project files\nCreated ${written.map((x) => `\`${x}\``).join(", ")}.` : "## Project files\nProject files already exist; left them untouched.");
 
           sections.push(await buildDoctorReport(ctx.cwd, dataFileInput));
           sections.push(`## Lightweight validation\n${validateDataset(dataFile)}`);
+          await patchWizardState(ctx.cwd, { validationAt: Date.now() });
 
           if (budget === "demo") {
             const saved = (await readWizardState(ctx.cwd)) ?? stateForRun;
@@ -2497,65 +2779,101 @@ export default async function (pi: ExtensionAPI) {
             sendReport("Tinker improve", "Missing `eval.py` or `data/eval.jsonl`. Run `/tinker eval init`, edit eval rows, then re-run improve.", "warning");
             return;
           }
+          const evalRowCount = readFileSync(evalData, "utf8").split(/\n/).filter((line) => line.trim()).length;
+          if (evalRowCount < 2 && !force) {
+            sendReport("Tinker improve", `Held-out eval has ${evalRowCount} row(s). Add at least 2 reviewed rows to \`data/eval.jsonl\` before API usage.`, "warning");
+            return;
+          }
+          const currentEvalHash = hashFile(evalData)!;
+          if (stateForRun.evalGenerated && stateForRun.evalReviewedHash !== currentEvalHash && options["eval-reviewed"] !== true) {
+            sendReport("Tinker improve", "Review `data/eval.jsonl`, then re-run the exact command with `--eval-reviewed`. Auto-held-out answers use exact matching and should not be trusted silently.", "warning");
+            return;
+          }
+          if (options["eval-reviewed"] === true) {
+            stateForRun.evalReviewedHash = currentEvalHash;
+            await patchWizardState(ctx.cwd, { evalReviewedHash: currentEvalHash });
+          }
+
+          const baselineOut = path.resolve(ctx.cwd, String(options["baseline-out"] ?? "eval_results/baseline.json"));
+          const sweepFingerprint = provenanceFingerprint({
+            eval: currentEvalHash,
+            evalScript: hashFile(script),
+            model: stateForRun.model,
+          });
           let evalEffort = Number(options.effort ?? stateForRun.effort ?? 0.9);
           if (!Number.isFinite(evalEffort) || evalEffort < 0 || evalEffort >= 1) evalEffort = 0.9;
-          if (isInklingModel(stateForRun.model) && options.effort === undefined && options["no-sweep"] !== true && !stateForRun.effortSweepAt) {
-            const prompt = firstEvalUserPrompt(evalData);
-            if (prompt) {
-              ctx.ui.setStatus("tinker", "managed improve: effort sweep on eval prompt");
-              try {
-                const sweep = await execFile(
-                  "python3",
-                  ["-m", "tinker_cookbook.scripts.inkling.sample_reasoning", `prompt=${prompt}`, "efforts=[0.2,0.7,0.9,0.99]"],
-                  { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 24 * 1024 * 1024 },
-                );
-                sections.push(`## Inkling effort sweep\nUsed the first eval user prompt. Pinned effort **${evalEffort}** (pass --effort to change). Cookbook SFT still renders at 0.9 unless you edit train_sft.py.\n\n<details><summary>Sweep output</summary>\n\n\`\`\`text\n${`${sweep.stdout}\n${sweep.stderr}`.trim().split(/\n/).slice(-80).join("\n")}\n\`\`\`\n</details>`);
-                await patchWizardState(ctx.cwd, { effort: evalEffort, effortSweepAt: Date.now() });
-                stateForRun.effort = evalEffort;
-                stateForRun.effortSweepAt = Date.now();
-              } catch (error: any) {
-                sections.push(`## Inkling effort sweep skipped\n${error?.message ?? String(error)}\nPinned effort **${evalEffort}** anyway.`);
-                await patchWizardState(ctx.cwd, { effort: evalEffort });
-                stateForRun.effort = evalEffort;
-              }
-            } else {
-              sections.push(`## Inkling effort\nNo eval user prompt found. Pinned effort **${evalEffort}**.`);
-              await patchWizardState(ctx.cwd, { effort: evalEffort });
-              stateForRun.effort = evalEffort;
+          let baselineCreatedBySweep = false;
+          if (isInklingModel(stateForRun.model) && options.effort === undefined && options["no-sweep"] !== true && stateForRun.effortSweepFingerprint !== sweepFingerprint) {
+            const efforts = parseInklingEfforts(options.efforts);
+            const results: Array<{ effort: number; accuracy: number; out: string }> = [];
+            ctx.ui.setStatus("tinker", "managed improve: score effort sweep on held-out eval");
+            for (const effort of efforts) {
+              const out = path.resolve(ctx.cwd, `eval_results/effort-${String(effort).replace(".", "-")}.json`);
+              await execFile("python3", [script, "--base-model", stateForRun.model ?? model, "--effort", String(effort), "--data", evalData, "--out", out], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
+              results.push({ effort, accuracy: readEvalSummary(out).accuracy ?? 0, out });
             }
-          } else {
-            await patchWizardState(ctx.cwd, { effort: evalEffort });
-            stateForRun.effort = evalEffort;
-            if (isInklingModel(stateForRun.model)) sections.push(`## Inkling effort\nPinned **${evalEffort}** for baseline and checkpoint eval.`);
+            results.sort((a, b) => b.accuracy - a.accuracy || a.effort - b.effort);
+            const selected = results[0]!;
+            evalEffort = selected.effort;
+            await mkdir(path.dirname(baselineOut), { recursive: true });
+            await writeFile(baselineOut, readFileSync(selected.out));
+            baselineCreatedBySweep = true;
+            sections.push([
+              "## Inkling effort selected from eval behavior",
+              "| Effort | Accuracy |",
+              "|---:|---:|",
+              ...results.slice().sort((a, b) => a.effort - b.effort).map((result) => `| ${result.effort} | ${(result.accuracy * 100).toFixed(1)}% |`),
+              "",
+              `Pinned **${evalEffort}**: the lowest effort tied for best held-out accuracy. Training, baseline, and checkpoint eval use this same value.`,
+            ].join("\n"));
+            stateForRun.effortSweepAt = Date.now();
+            stateForRun.effortSweepFingerprint = sweepFingerprint;
+          } else if (isInklingModel(stateForRun.model)) {
+            sections.push(`## Inkling effort\nPinned **${evalEffort}** for training, baseline, and checkpoint eval.`);
           }
-          if (isInklingModel(stateForRun.model) && evalEffort !== 0.9) {
-            sections.push("## Effort warning\nThe generated `train_sft.py` still uses Cookbook's default render effort 0.9. Edit it if you pinned a different eval effort, or keep 0.9.");
+          stateForRun.effort = evalEffort;
+
+          const trainScript = path.resolve(ctx.cwd, "train_sft.py");
+          if (isInklingModel(stateForRun.model) && !readFileSync(trainScript, "utf8").includes("EffortConversationFileBuilder")) {
+            sendReport("Tinker improve", "This project has an older `train_sft.py` that cannot pin Inkling training effort. Re-run the demo/setup command with `--force`, review the regenerated script, then continue.", "warning");
+            return;
+          }
+
+          const runFingerprint = provenanceFingerprint({
+            data: hashFile(dataFile),
+            effort: evalEffort,
+            eval: currentEvalHash,
+            evalScript: hashFile(script),
+            model: stateForRun.model,
+          });
+          await patchWizardState(ctx.cwd, {
+            effort: evalEffort,
+            effortSweepAt: stateForRun.effortSweepAt,
+            effortSweepFingerprint: stateForRun.effortSweepFingerprint,
+          });
+          const yamlPath = path.join(ctx.cwd, "tinker.yaml");
+          if (isInklingModel(stateForRun.model) && existsSync(yamlPath)) {
+            const yaml = readFileSync(yamlPath, "utf8");
+            await writeFile(yamlPath, /^effort:/m.test(yaml) ? yaml.replace(/^effort:.*$/m, `effort: ${evalEffort}`) : `${yaml.trimEnd()}\neffort: ${evalEffort}\n`);
           }
 
           ctx.ui.setStatus("tinker", "managed improve: baseline eval");
-          const baselineOut = path.resolve(ctx.cwd, String(options["baseline-out"] ?? "eval_results/baseline.json"));
-          let baselineNeedsRun = !existsSync(baselineOut) || force;
-          if (!baselineNeedsRun && isInklingModel(stateForRun.model)) {
-            try {
-              baselineNeedsRun = readEvalSummary(baselineOut).effort !== Number(evalEffort);
-              if (baselineNeedsRun) sections.push(`## Baseline invalidated\nExisting baseline used a different or unknown Inkling effort; re-running at effort ${evalEffort}.`);
-            } catch {
-              baselineNeedsRun = true;
-            }
-          }
+          let baselineNeedsRun = !baselineCreatedBySweep && (!existsSync(baselineOut) || force || stateForRun.baselineFingerprint !== runFingerprint);
+          if (baselineNeedsRun && existsSync(baselineOut)) sections.push("## Baseline invalidated\nTraining data, eval data, eval code, model, or effort changed.");
           if (baselineNeedsRun) {
             const { stdout, stderr } = await execFile("python3", [script, "--base-model", stateForRun.model ?? model, "--effort", String(evalEffort), "--data", evalData, "--out", baselineOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
             sections.push(`## Baseline eval\n${formatEvalSummary(baselineOut)}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${stdout}\n${stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
-            await patchWizardState(ctx.cwd, { baselineResult: baselineOut, model: stateForRun.model });
           } else {
-            sections.push(`## Baseline eval\nUsing existing \`${rel(ctx.cwd, baselineOut)}\`.\n\n${formatEvalSummary(baselineOut)}`);
+            sections.push(`## Baseline eval\nUsing provenance-matched \`${rel(ctx.cwd, baselineOut)}\`.\n\n${formatEvalSummary(baselineOut)}`);
           }
+          stateForRun.baselineResult = baselineOut;
+          stateForRun.baselineFingerprint = runFingerprint;
+          await patchWizardState(ctx.cwd, { baselineResult: baselineOut, baselineFingerprint: runFingerprint, model: stateForRun.model });
 
           ctx.ui.setStatus("tinker", "managed improve: smoke train");
-          const trainScript = path.resolve(ctx.cwd, "train_sft.py");
           const baseLog = String(stateForRun.logPath ?? "logs/sft-managed");
           const smokeLog = `${baseLog}-smoke`;
-          const smoke = await execFile("python3", [trainScript, "max_steps=2", "save_every=1", `log_path=${smokeLog}`], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
+          const smoke = await execFile("python3", [trainScript, "max_steps=2", "save_every=1", `log_path=${smokeLog}`, `effort=${evalEffort}`], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
           sections.push(`## Smoke train\n2-step smoke training completed.\n\nLatest metrics:\n${latestMetrics(path.join(ctx.cwd, smokeLog, "metrics.jsonl")) ?? "No metrics found yet."}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${smoke.stdout}\n${smoke.stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
           await patchWizardState(ctx.cwd, { smokeAt: Date.now(), smokeLogDir: smokeLog });
 
@@ -2569,7 +2887,18 @@ export default async function (pi: ExtensionAPI) {
             sections.push(compareEvalSummaries(baselineOut, smokeEvalOut));
             const cmp = evalBeatBaseline(baselineOut, smokeEvalOut);
             smokeBeatBaseline = cmp.ok || force;
-            await patchWizardState(ctx.cwd, { checkpointPath: smokeCheckpoint, candidateResult: smokeEvalOut });
+            stateForRun.checkpointPath = smokeCheckpoint;
+            stateForRun.candidateCheckpointPath = smokeCheckpoint;
+            stateForRun.candidateResult = smokeEvalOut;
+            stateForRun.candidateFingerprint = runFingerprint;
+            stateForRun.candidateDecision = cmp.ok || force ? "approved" : "rejected";
+            await patchWizardState(ctx.cwd, {
+              checkpointPath: smokeCheckpoint,
+              candidateCheckpointPath: smokeCheckpoint,
+              candidateResult: smokeEvalOut,
+              candidateFingerprint: runFingerprint,
+              candidateDecision: stateForRun.candidateDecision,
+            });
             if (!cmp.ok) {
               sections.push(suggestDataImprovementsFromEval(smokeEvalOut));
               sections.push(`## Stopped: checkpoint did not beat baseline\n${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%. Add 2–5 training examples like the failures, then re-run smoke. Pass --force to scale anyway.`);
@@ -2601,10 +2930,10 @@ export default async function (pi: ExtensionAPI) {
 
           ctx.ui.setStatus("tinker", `managed improve: train ${steps} steps`);
           const trainLog = `${baseLog}-${budget}-${steps}`;
-          const train = await execFile("python3", [trainScript, `max_steps=${steps}`, `log_path=${trainLog}`], { cwd: ctx.cwd, timeout: Number(options.trainTimeout ?? options.timeout ?? 3_600_000), maxBuffer: 12 * 1024 * 1024 });
+          const train = await execFile("python3", [trainScript, `max_steps=${steps}`, `log_path=${trainLog}`, `effort=${evalEffort}`], { cwd: ctx.cwd, timeout: Number(options.trainTimeout ?? options.timeout ?? 3_600_000), maxBuffer: 12 * 1024 * 1024 });
           const checkpoint = firstSamplerCheckpoint(path.resolve(ctx.cwd, trainLog));
           sections.push(`## Training\nRan ${steps} steps in \`${trainLog}\`.\n\nLatest metrics:\n${latestMetrics(path.join(ctx.cwd, trainLog, "metrics.jsonl")) ?? "No metrics found yet."}\n\n${checkpoint ? `Sampler checkpoint: \`${checkpoint}\`` : "No sampler checkpoint found yet."}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${train.stdout}\n${train.stderr}`.trim().split(/\n/).slice(-60).join("\n")}\n\`\`\`\n</details>`);
-          await patchWizardState(ctx.cwd, { checkpointPath: checkpoint, logPath: trainLog });
+          await patchWizardState(ctx.cwd, { checkpointPath: checkpoint, candidateCheckpointPath: checkpoint, candidateFingerprint: runFingerprint, logPath: trainLog });
 
           if (checkpoint) {
             ctx.ui.setStatus("tinker", "managed improve: checkpoint eval");
@@ -2613,7 +2942,13 @@ export default async function (pi: ExtensionAPI) {
             sections.push(`## Checkpoint eval\n${formatEvalSummary(candidateOut)}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${evalRun.stdout}\n${evalRun.stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
             sections.push(compareEvalSummaries(baselineOut, candidateOut));
             const cmp = evalBeatBaseline(baselineOut, candidateOut);
-            await patchWizardState(ctx.cwd, { checkpointPath: checkpoint, candidateResult: candidateOut });
+            await patchWizardState(ctx.cwd, {
+              checkpointPath: checkpoint,
+              candidateCheckpointPath: checkpoint,
+              candidateResult: candidateOut,
+              candidateFingerprint: runFingerprint,
+              candidateDecision: cmp.ok || force ? "approved" : "rejected",
+            });
             if (!cmp.ok && !force) {
               sections.push(suggestDataImprovementsFromEval(candidateOut));
               sections.push(`## Not registered\nCheckpoint did not beat baseline (${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%). Not registering for chat. Add examples and re-run smoke, or pass --force.`);
@@ -2623,14 +2958,30 @@ export default async function (pi: ExtensionAPI) {
               return;
             }
             sections.push(suggestDataImprovementsFromEval(candidateOut));
+            await patchWizardState(ctx.cwd, {
+              approvedCheckpointPath: checkpoint,
+              approvedResult: candidateOut,
+              approvedFingerprint: runFingerprint,
+              approvedAt: Date.now(),
+              candidateDecision: "approved",
+            });
             const alias = sanitizeName(String(options.alias ?? `tinker-${path.basename(trainLog)}`));
             if (options.register !== false) {
               state.checkpoints = state.checkpoints.filter((m) => m.id !== checkpoint && m.name !== alias);
               state.checkpoints.push(checkpointRegistration({ id: checkpoint, name: alias, baseModel: stateForRun.model }));
               await saveState(state);
               registerTinkerProvider();
-              await patchWizardState(ctx.cwd, { checkpointPath: checkpoint, candidateResult: candidateOut, registeredModel: alias });
+              await patchWizardState(ctx.cwd, {
+                checkpointPath: checkpoint,
+                candidateCheckpointPath: checkpoint,
+                candidateResult: candidateOut,
+                candidateFingerprint: runFingerprint,
+                candidateDecision: "approved",
+                registeredModel: alias,
+              });
               sections.push(`## Registered for chat\nRegistered \`${alias}\`. Use \`/model\` to select it, then:\n\n\`\`\`text\n/tinker deploy ${alias}\n\`\`\``);
+            } else {
+              await patchWizardState(ctx.cwd, { registeredModel: undefined });
             }
           } else {
             sections.push("## No checkpoint yet\nTraining completed but no sampler checkpoint was found. Check `checkpoints.jsonl` or increase steps/save frequency.");
@@ -2658,7 +3009,7 @@ export default async function (pi: ExtensionAPI) {
         const resolved = resolveCheckpointRef(positional[0], state, wizard);
         if (!resolved.checkpoint) {
           sendReport("Tinker deploy", [
-            "No checkpoint found to deploy.",
+            positional[0] === "latest" || !positional[0] ? "No approved checkpoint found to deploy. A candidate must beat its provenance-matched baseline first." : "No checkpoint found to deploy.",
             "",
             "Usage:",
             "```text",
@@ -2667,6 +3018,14 @@ export default async function (pi: ExtensionAPI) {
             "/tinker deploy <registered-alias>",
             "```",
           ].join("\n"), "warning");
+          return;
+        }
+        if (wizard?.candidateCheckpointPath === resolved.checkpoint && wizard.approvedCheckpointPath !== resolved.checkpoint && options.force !== true) {
+          sendReport("Tinker deploy blocked", "That checkpoint is a rejected or unevaluated candidate. Deploy an approved checkpoint, or pass `--force` with the explicit checkpoint URI.", "warning");
+          return;
+        }
+        if (wizard?.approvedCheckpointPath === resolved.checkpoint && wizard.approvedFingerprint !== wizardRunFingerprint(ctx.cwd, wizard) && options.force !== true) {
+          sendReport("Tinker deploy blocked", "The approved checkpoint's data/eval/code/model/effort provenance is stale. Re-run `/tinker improve` to evaluate again, or pass `--force` with the explicit checkpoint URI.", "warning");
           return;
         }
         const alias = sanitizeName(String(options.alias ?? positional[1] ?? resolved.alias ?? "my-finetune"));

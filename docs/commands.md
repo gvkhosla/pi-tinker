@@ -15,7 +15,7 @@ You only need a few commands for the normal workflow:
 | Learn about Inkling | `/tinker inkling` |
 | Choose Inkling or a checkpoint | `/model` |
 
-`new`, `start`, `init`, and `finetune` are aliases for `improve --budget demo`. Smoke/small refuse to scale or register a checkpoint that does not beat baseline unless you pass `--force`.
+`new`, `start`, `init`, and `finetune` are aliases for `improve --budget demo`. Managed improve hashes data/code/model/effort provenance. Smoke/small refuse to scale or approve a checkpoint that does not beat the matching baseline unless you pass `--force`; `deploy latest` resolves only an approved checkpoint.
 
 The `demo` budget makes no API calls. Commands using `--yes` may sample or train through the Tinker API.
 
@@ -44,19 +44,19 @@ The easiest way to fine-tune. It prepares data, checks it, runs a small test, tr
 
 ```text
 /tinker improve data.csv --goal "better support answers" --budget demo
-/tinker improve data.csv --goal "better support answers" --budget smoke --yes
+/tinker improve data.csv --goal "better support answers" --budget smoke --eval-reviewed --yes
 /tinker improve data.csv --goal "better support answers" --budget small --yes
 ```
 
 In order, it does this:
 
-1. prepares your data and editable Python files,
-2. checks the environment and validates examples,
-3. creates a held-out eval and measures the base model,
-4. runs only two training steps first,
-5. scales only after confirmation,
-6. evaluates and registers the checkpoint,
-7. shows wins, regressions, and suggested data improvements.
+1. normalizes source data and deterministically holds out task-relevant eval rows,
+2. excludes held-out rows from training and asks you to review the editable eval,
+3. hashes source/train/eval/code/model provenance and invalidates stale results,
+4. scores Inkling effort on the held-out eval and pins one value everywhere,
+5. measures the base model and runs only two training steps first,
+6. scales only after the checkpoint beats its matching baseline,
+7. keeps rejected candidates separate and approves/registers only winners.
 
 Budgets:
 
@@ -73,17 +73,21 @@ Options:
 |---|---:|---|
 | `--goal` / `--metric` | TODO | What should improve |
 | `--budget` | `demo` | `demo`, `smoke`, `small`, or `real` |
-| `--model` | `thinkingmachines/Inkling` | Base model / renderer model |
-| `--effort` | `0.9` | Inkling baseline/checkpoint eval effort; both use the same value |
+| `--model` | `thinkingmachines/Inkling-Small` | Base model / renderer model |
+| `--eval <jsonl>` | automatic holdout | Use a separate reviewed eval; all source rows remain in training |
+| `--eval-reviewed` | false | Acknowledge review of an automatic `data/eval.jsonl` before API usage |
+| `--effort` | selected / `0.9` | Pin Inkling training + baseline + checkpoint effort |
+| `--efforts` | low,medium,high,xhigh | Efforts scored when selecting from eval behavior |
+| `--no-sweep` | false | Skip automatic effort scoring and keep the pinned/default effort |
 | `--steps` | budget default | Override scale-up max steps |
 | `--yes` | false | Confirm API-using stages |
-| `--force` | false | Overwrite generated files / rerun baseline |
-| `--alias` | generated | Alias for registered checkpoint |
-| `--register` | true | Register checkpoint for chat if one is found |
+| `--force` | false | Overwrite generated files, rerun, or explicitly override a quality gate |
+| `--alias` | generated | Alias for an approved registered checkpoint |
+| `--register` | true | Register an approved checkpoint for chat |
 
 ## `/tinker deploy <checkpoint-or-alias> [alias] [options]`
 
-Generates Tinker API clients **and** a serving decision. It does not stand up GPUs.
+Generates Tinker API clients **and** a serving decision. It does not stand up GPUs. `latest` means the latest checkpoint approved by managed evaluation, never merely the newest candidate. An explicit rejected/unevaluated candidate is blocked unless `--force` is supplied.
 
 ```text
 /tinker deploy latest
