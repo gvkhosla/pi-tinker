@@ -95,6 +95,9 @@ deploy/<alias>/.env.example
 deploy/<alias>/python_client.py
 deploy/<alias>/node_client.mjs
 deploy/<alias>/fastapi_app.py
+deploy/<alias>/EXPORT.md
+deploy/<alias>/export.py
+deploy/<alias>/SERVING.md
 ```
 
-These snippets are for quick inspection/internal app testing through Tinker's OpenAI-compatible endpoint, not a full production serving stack.
+Tinker API snippets are for inspection. `EXPORT.md` / `export.py` wrap Cookbook weight export when the base model can leave Tinker. `SERVING.md` is the stay-on-Tinker vs self-host decision (HTDYM pointer when the architecture is in that catalog). Inkling stays on Tinker. This is not a production serving stack.

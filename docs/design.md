@@ -14,7 +14,7 @@ Adding another framework inside Pi would make the user experience worse. Pi shou
 
 - direct Inkling registration through Tinker's Anthropic-compatible endpoint,
 - effort mapping and representative-task sweeps for Inkling,
-- discovery: skills that tell Pi when and how to use Tinker,
+- discovery: thin Pi skills that point at official Cookbook research/debug/inkling skills,
 - a beginner step-by-step wizard (`/tinker start`, `/tinker next`, `/tinker reset`),
 - setup checks,
 - JSONL plus Python-backed renderer/token-mask validation,
@@ -23,7 +23,8 @@ Adding another framework inside Pi would make the user experience worse. Pi shou
 - scaffolding editable Tinker Cookbook scripts,
 - smoke-test execution,
 - live monitoring/log summarization,
-- checkpoint discovery and registration for interactive inspection in Pi.
+- checkpoint discovery and registration for interactive inspection in Pi,
+- `/tinker deploy` artifacts: Tinker API clients, Cookbook weight-export scripts, and a serving decision (not a serving runtime).
 
 Tinker/Tinker Cookbook handle:
 
@@ -41,7 +42,7 @@ Tinker/Tinker Cookbook handle:
 - No custom TypeScript Tinker SDK wrapper.
 - No replacement training config format.
 - No new eval or logging format.
-- No production inference abstraction.
+- No production inference abstraction. Generate Cookbook export/Modal commands and an HTDYM pointer; do not wrap vLLM, SGLang, Modal, or HTDYM as a Pi runtime.
 
 ## Ideal user flow
 

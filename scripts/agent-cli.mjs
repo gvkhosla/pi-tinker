@@ -6,7 +6,7 @@ import path from "node:path";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
 
-if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) {
+if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
   console.log(`pi-tinker-agent — non-interactive adapter for coding agents
 
 Usage:
@@ -14,10 +14,11 @@ Usage:
   pi-tinker-agent doctor
   pi-tinker-agent validate data/train.jsonl --model thinkingmachines/Inkling
   pi-tinker-agent --cwd /path/to/project new data.csv --goal "better answers"
+  pi-tinker-agent --raw 'improve data.csv --goal "better answers" --budget demo'
 
 This adapter runs pi-tinker's /tinker command in Pi print mode. Pi remains the
-runtime, while Claude Code, Codex, Cursor, Copilot, Gemini CLI, and other agents
-can invoke the workflow as a normal shell command.
+runtime, while Amp, OpenCode, Claude Code, Codex, Cursor, Copilot, Gemini CLI,
+and other agents can invoke the workflow as a normal shell command.
 `);
   process.exit(0);
 }
@@ -34,10 +35,14 @@ if (cwdIndex !== -1) {
   argv.splice(cwdIndex, 2);
 }
 
+const rawMode = argv[0] === "--raw";
+if (rawMode) argv.shift();
 if (argv[0] === "/tinker" || argv[0] === "tinker") argv.shift();
 if (argv.length === 0) argv.push("help");
 
-const command = `/tinker ${argv.map((value) => JSON.stringify(value)).join(" ")}`;
+const command = rawMode
+  ? `/tinker ${argv.join(" ")}`
+  : `/tinker ${argv.map((value) => JSON.stringify(value)).join(" ")}`;
 const piBinary = process.env.PI_TINKER_PI_BIN || "pi";
 const child = spawn(
   piBinary,

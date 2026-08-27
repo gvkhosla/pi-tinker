@@ -10,6 +10,7 @@ const required = [
   "extensions/tinker.ts",
   "skills/tinker-research/SKILL.md",
   "skills/tinker-debug/SKILL.md",
+  "skills/tinker-inkling/SKILL.md",
   "docs/commands.md",
   "docs/design.md",
   "docs/coding-agents.md",
@@ -55,6 +56,7 @@ function checkSkill(file, expectedName) {
 
 checkSkill("skills/tinker-research/SKILL.md", "tinker-research");
 checkSkill("skills/tinker-debug/SKILL.md", "tinker-debug");
+checkSkill("skills/tinker-inkling/SKILL.md", "tinker-inkling");
 
 try {
   execFileSync(process.execPath, ["--check", "extensions/tinker.ts"], { stdio: "pipe" });

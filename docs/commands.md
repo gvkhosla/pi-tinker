@@ -19,7 +19,7 @@ The `demo` budget makes no API calls. Commands using `--yes` may sample or train
 
 ## `/tinker inkling [info|sweep]`
 
-Shows Inkling setup and registers base Inkling in Pi automatically. After setting `TINKER_API_KEY`, select either the 64K or 256K model with `/model`.
+Shows Inkling setup and registers Inkling-Small (default), full Inkling, and the 256K variant in Pi automatically. After setting `TINKER_API_KEY`, pick one with `/model`.
 
 ```text
 /tinker inkling
@@ -28,11 +28,13 @@ Shows Inkling setup and registers base Inkling in Pi automatically. After settin
 
 The sweep calls Tinker's official `sample_reasoning` script. Presets map to `low=0.2`, `medium=0.7`, `high=0.9`, and `xhigh=0.99`; raw floats in `[0, 1)` also work. Options: `--max-tokens`, `--temperature`, `--timeout`, and `--yes`.
 
-Install the required renderer stack with:
+Install Cookbook (includes `tml-renderers` and requires `torch>=2.10`):
 
 ```bash
-uv pip install -U 'tinker-cookbook[inkling]'
+uv pip install -U tinker-cookbook
 ```
+
+There is no `[inkling]` extra anymore.
 
 ## `/tinker improve [input] [options]`
 
@@ -79,12 +81,12 @@ Options:
 
 ## `/tinker deploy <checkpoint-or-alias> [alias] [options]`
 
-Generates app/client snippets for using a trained Tinker sampler checkpoint through the OpenAI-compatible endpoint.
+Generates Tinker API clients **and** a serving decision. It does not stand up GPUs.
 
 ```text
 /tinker deploy latest
 /tinker deploy my-sft
-/tinker deploy tinker://.../sampler_weights/... support-sft
+/tinker deploy tinker://.../sampler_weights/... support-sft --model Qwen/Qwen3.8-27B
 ```
 
 Writes by default:
@@ -95,7 +97,14 @@ deploy/<alias>/.env.example
 deploy/<alias>/python_client.py
 deploy/<alias>/node_client.mjs
 deploy/<alias>/fastapi_app.py
+deploy/<alias>/EXPORT.md
+deploy/<alias>/export.py
+deploy/<alias>/SERVING.md
 ```
+
+- **Inkling / Inkling-Small:** stay on Tinker's endpoint. `export.py` exits with that message.
+- **Qwen / Nemotron / gpt-oss / Kimi / DeepSeek:** `EXPORT.md` + `export.py` wrap Cookbook `weights.download` / `build_hf_model` / `build_lora_adapter`, plus optional Modal SGLang commands.
+- **SERVING.md:** stay-on-Tinker vs self-host. If the base model is in HTDYM (Qwen3.8-27B, Qwen3.6-35B-A3B, gpt-oss 20B/120B, Kimi K2.6), it points at https://htdym.sailresearch.com with the matching preset. It does not run the estimator.
 
 Options:
 
@@ -103,6 +112,7 @@ Options:
 |---|---:|---|
 | `--out` | `deploy/<alias>` | Output directory |
 | `--alias` | positional/generated | Friendly name |
+| `--model` / `--base-model` | checkpoint/wizard base | Architecture used for export + HTDYM mapping |
 | `--force` | false | Overwrite existing files |
 
 ## `/tinker demo`
@@ -240,7 +250,7 @@ Checks local prerequisites:
 It does not install anything automatically. If packages are missing, install:
 
 ```bash
-uv pip install -U 'tinker-cookbook[inkling]'
+uv pip install -U tinker-cookbook
 ```
 
 ## `/tinker init [jsonl] [options]`

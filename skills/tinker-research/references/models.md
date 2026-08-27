@@ -1,57 +1,43 @@
-# Model Lineup
+# Model lineup (snapshot)
 
-Full listing of available models with types, architecture, and sizes.
+Canonical live list: https://tinker-docs.thinkingmachines.ai/tinker/models/
 
-## Thinking Machines
+Deprecations: https://tinker-docs.thinkingmachines.ai/tinker/model-deprecations/
+
+This file is a snapshot of Tinker Cookbook's `skills/research/references/models.md` for offline Pi use. Prefer the docs URL when they disagree.
+
+## Thinking Machines family
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
-| `thinkingmachines/Inkling` | Reasoning + Vision + native audio | MoE, 975B total / 41B active | Large |
-| `thinkingmachines/Inkling:peft:262144` | Reasoning + Vision inference variant | MoE, 975B total / 41B active | Large |
+| `thinkingmachines/Inkling` | Hybrid + Audio + Vision | MoE, 975B / 41B active | Large |
+| `thinkingmachines/Inkling-Small` | Hybrid + Audio + Vision | MoE, 276B / 12B active | Medium |
+| `thinkingmachines/Inkling:peft:262144` | Long-context Inkling | MoE | Large |
 
-For fine-tuning, use `thinkingmachines/Inkling`. Install `tinker-cookbook[inkling]` and let `model_info` select the official TMLv0 renderer. Inkling effort is a float in `[0, 1)`; default generic SFT effort is `0.9`.
+These render through `tml-renderers` (a **default** Cookbook dependency, not an `[inkling]` extra). Require an explicit thinking-effort value. Prefer Inkling-Small unless the user asks for full Inkling. Use the `tinker-inkling` skill.
 
 ## Qwen family
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `Qwen/Qwen3.8-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.6-35B-A3B` | Hybrid + Vision | MoE | Medium |
 | `Qwen/Qwen3.6-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.5-397B-A17B` | Hybrid + Vision | MoE | Large |
-| `Qwen/Qwen3.5-35B-A3B` | Hybrid + Vision | MoE | Medium |
 | `Qwen/Qwen3.5-35B-A3B-Base` | Base | MoE | Medium |
-| `Qwen/Qwen3.5-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.5-9B` | Hybrid + Vision | Dense | Small |
 | `Qwen/Qwen3.5-9B-Base` | Base | Dense | Small |
 | `Qwen/Qwen3.5-4B` | Hybrid + Vision | Dense | Compact |
-| `Qwen/Qwen3-235B-A22B-Instruct-2507` | Instruction | MoE | Large |
-| `Qwen/Qwen3-30B-A3B-Instruct-2507` | Instruction | MoE | Medium |
-| `Qwen/Qwen3-30B-A3B` | Hybrid | MoE | Medium |
-| `Qwen/Qwen3-30B-A3B-Base` | Base | MoE | Medium |
-| `Qwen/Qwen3-32B` | Hybrid | Dense | Medium |
 | `Qwen/Qwen3-8B` | Hybrid | Dense | Small |
-| `Qwen/Qwen3-8B-Base` | Base | Dense | Small |
-| `Qwen/Qwen3-4B-Instruct-2507` | Instruction | Dense | Compact |
-| `Qwen/Qwen3-VL-235B-A22B-Instruct` | Vision | MoE | Large |
-| `Qwen/Qwen3-VL-30B-A3B-Instruct` | Vision | MoE | Medium |
 
-Use the `_disable_thinking` renderer variant when you want direct instruction-following behavior from a hybrid Qwen model.
-
-## Llama family
-
-| Model | Type | Arch | Size |
-|-------|------|------|------|
-| `meta-llama/Llama-3.3-70B-Instruct` | Instruction | Dense | Large |
-| `meta-llama/Llama-3.1-70B` | Base | Dense | Large |
-| `meta-llama/Llama-3.1-8B` | Base | Dense | Small |
-| `meta-llama/Llama-3.1-8B-Instruct` | Instruction | Dense | Small |
-| `meta-llama/Llama-3.2-3B` | Base | Dense | Compact |
-| `meta-llama/Llama-3.2-1B` | Base | Dense | Compact |
+Use the `_disable_thinking` renderer variant when you want direct instruction-following from a hybrid Qwen model.
 
 ## Nemotron family
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` | Hybrid | MoE | Medium |
+| `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16` | Hybrid | MoE | Large |
 | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16` | Hybrid | MoE | Large |
 | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16` | Hybrid | MoE | Medium |
 
@@ -62,36 +48,27 @@ Use the `_disable_thinking` renderer variant when you want direct instruction-fo
 | `openai/gpt-oss-120b` | Reasoning | MoE | Medium |
 | `openai/gpt-oss-20b` | Reasoning | MoE | Small |
 | `deepseek-ai/DeepSeek-V3.1` | Hybrid | MoE | Large |
-| `deepseek-ai/DeepSeek-V3.1-Base` | Base | MoE | Large |
-| `moonshotai/Kimi-K2-Thinking` | Reasoning | MoE | Large |
-| `moonshotai/Kimi-K2.5` | Reasoning + Vision | MoE | Large |
-| `moonshotai/Kimi-K2.6` | Reasoning + Vision | MoE | Large |
+| `moonshotai/Kimi-K2.6` | Hybrid + Vision | MoE | Large |
 
-## Model types explained
+## HTDYM overlap (self-host pricing)
 
-- **Base**: Pre-trained on raw text. For research or full post-training pipelines.
-- **Instruction**: Fine-tuned for instruction following. Fast inference, no chain-of-thought.
-- **Reasoning**: Always uses chain-of-thought before visible output.
-- **Hybrid**: Can operate in both thinking and non-thinking modes.
-- **Vision**: Processes images alongside text.
+Only these Tinker ids currently map to an HTDYM preset. `/tinker deploy` writes that mapping into `SERVING.md`.
 
-## Size categories
+| Tinker id | HTDYM preset |
+|---|---|
+| `Qwen/Qwen3.8-27B` | Qwen3.8 27B |
+| `Qwen/Qwen3.6-35B-A3B` | Qwen3.6 35B A3B |
+| `openai/gpt-oss-120b` | gpt-oss-120b MXFP4/BF16 |
+| `openai/gpt-oss-20b` | gpt-oss-20b MXFP4/BF16 |
+| `moonshotai/Kimi-K2.6` | Kimi K2.6 INT4/BF16 |
 
-- **Compact**: 1B-4B parameters
-- **Small**: 8B parameters
-- **Medium**: 27B-32B parameters
-- **Large**: 70B+ total parameters (for MoE, also inspect active parameters and Tinker pricing)
+Inkling is not in HTDYM. Llama 3.x is not on Tinker's current lineup.
 
 ## Renderer matching
 
-Every model needs a matching renderer. Always use automatic lookup:
 ```python
 from tinker_cookbook import model_info
 renderer_name = model_info.get_recommended_renderer_name(model_name)
 ```
 
-The mapping is maintained in `tinker_cookbook/model_info.py`. Never hardcode renderer names. Inkling's renderer implementation is supplied by `tml-renderers` through the `tinker-cookbook[inkling]` extra.
-
-## Reference
-
-- `tinker_cookbook/model_info.py` — Model metadata and renderer mapping
+Never hardcode renderer names.

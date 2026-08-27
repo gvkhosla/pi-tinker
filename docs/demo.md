@@ -63,7 +63,7 @@ The `demo` budget still makes no API calls.
 First install Inkling's Python dependencies:
 
 ```bash
-uv pip install -U 'tinker-cookbook[inkling]'
+uv pip install -U tinker-cookbook
 export TINKER_API_KEY="your-api-key"
 ```
 

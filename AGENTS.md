@@ -19,7 +19,7 @@ This `AGENTS.md` is the canonical guide for every coding agent. Pi is the primar
 ```bash
 node scripts/agent-cli.mjs inkling
 node scripts/agent-cli.mjs doctor
-node scripts/agent-cli.mjs validate data/train.jsonl --model thinkingmachines/Inkling
+node scripts/agent-cli.mjs validate data/train.jsonl --model thinkingmachines/Inkling-Small
 ```
 
 When installed from npm, use `pi-tinker-agent` instead. Read `docs/coding-agents.md` for details. Other agents should inspect and edit the generated Python directly; they must not imitate hidden Pi UI state or trigger API-using stages without explicit user approval.
@@ -59,10 +59,10 @@ Then, only after the user understands API usage and evals:
 Manual path:
 
 ```text
-/tinker new <input> --model thinkingmachines/Inkling --goal "what should improve"
+/tinker new <input> --model thinkingmachines/Inkling-Small --goal "what should improve"
 /tinker doctor
-/tinker validate data/train.jsonl --model thinkingmachines/Inkling
-/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9 --yes
+/tinker validate data/train.jsonl --model thinkingmachines/Inkling-Small
+/tinker eval baseline --model thinkingmachines/Inkling-Small --effort 0.9 --yes
 /tinker smoke train_sft.py --yes
 /tinker next
 ```
@@ -84,22 +84,24 @@ If the user is stuck:
 
 - Start from a zero-data demo: `/tinker demo`.
 - Run a managed improve loop with `/tinker improve`.
-- Generate app/client snippets with `/tinker deploy`.
+- Generate Tinker API snippets, Cookbook export files, and a serving decision with `/tinker deploy`.
 - Convert CSV, JSON, JSONL prompt/response rows, TXT/MD files, or docs directories to chat JSONL.
 - Scaffold editable Tinker Cookbook SFT scripts.
 - Validate JSONL shape and, when dependencies are installed, renderer/token masks.
 - Create and run an eval-first baseline/checkpoint comparison flow.
 - Run a 2-step smoke test before spending real compute.
 - Monitor logs and discover checkpoints.
-- Register base Inkling and Tinker sampler checkpoints as Pi models with tool use, vision, streamed thinking, and effort controls.
+- Register Inkling-Small (default), full Inkling, the 256K variant, and Tinker sampler checkpoints as Pi models with tool use, vision, streamed thinking, and effort controls.
 - Expose the same `/tinker` operator to other coding agents through the `pi-tinker-agent` shell adapter.
 
 ## What is not solved here
 
 - It cannot create high-quality training data from nothing.
 - It is strongest for SFT; advanced RL/DPO is mostly guided by skills, not the extension wizard.
-- It does not provide production serving; checkpoint registration is for inspection inside Pi.
-- Real training requires `TINKER_API_KEY`, Python 3.11+, and `tinker-cookbook[inkling]` for Inkling's TMLv0 renderer.
+- It does not run a production serving stack. `/tinker deploy` writes Tinker API clients plus Cookbook `weights.*` / Modal commands and an HTDYM pointer when the base model is in that catalog. Inkling stays on Tinker.
+- Real training requires `TINKER_API_KEY`, Python 3.11+, Tinker SDK 0.23+, torch>=2.10, and `tinker-cookbook` (tml-renderers is a default dep).
+- Prefer `thinkingmachines/Inkling-Small` unless the user asks for full Inkling. Do not train retired Tinker models; check https://tinker-docs.thinkingmachines.ai/tinker/models/.
+- Do not vendor Cookbook research/debug skills. Point agents at `/plugin marketplace add thinking-machines-lab/tinker-cookbook`.
 - Generic Inkling SFT uses the renderer's default `effort=0.9`; baseline and checkpoint eval effort must match.
 
 ## Development checks

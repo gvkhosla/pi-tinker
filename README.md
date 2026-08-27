@@ -30,7 +30,7 @@ Then:
 /model
 ```
 
-Choose one of the Tinker Inkling models from `/model`. Inkling supports tools, images, streamed thinking, and adjustable reasoning effort.
+Choose an Inkling model from `/model`. **Inkling-Small is the default** (cheaper, same renderer and effort interface). Full Inkling and the 256K variant are there if you need them. All three support tools, images, streamed thinking, and adjustable reasoning effort.
 
 ### 2. Try the no-cost demo
 
@@ -72,13 +72,11 @@ data → validation → baseline eval → 2-step smoke run → training → chec
 
 ## Setup for fine-tuning
 
-Chatting with Inkling only needs Pi and `TINKER_API_KEY`. Fine-tuning also needs Python 3.11+ and Inkling's renderer stack:
+Chatting with Inkling only needs Pi and `TINKER_API_KEY`. Fine-tuning also needs Python 3.11+, Tinker SDK 0.23+, and PyTorch 2.10+ (`tml-renderers` is a default Cookbook dependency, not an extra):
 
 ```bash
-uv pip install -U 'tinker-cookbook[inkling]'
+uv pip install -U tinker-cookbook
 ```
-
-This installs compatible versions of the Tinker SDK, Tinker Cookbook, and `tml-renderers`.
 
 Check everything with:
 
@@ -97,6 +95,7 @@ train_sft.py          Tinker Cookbook training script
 eval.py               baseline/checkpoint eval script
 tinker.yaml           readable run settings
 notes/plan.md         experiment notes
+deploy/<alias>/       Tinker API snippets, EXPORT.md, SERVING.md, export.py
 ```
 
 Tinker and Tinker Cookbook remain the training layer. `pi-tinker` is an operator around them, not a separate framework.

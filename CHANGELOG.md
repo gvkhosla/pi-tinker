@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0
+
+Cookbook catch-up and serving decision:
+
+- Dropped the removed `tinker-cookbook[inkling]` extra. Install is `uv pip install -U tinker-cookbook` (`tml-renderers` + `torch>=2.10` are default deps).
+- Registered `thinkingmachines/Inkling-Small` and made it the default model. Full Inkling remains available.
+- Synced the packaged model snapshot with Cookbook's live lineup; doctor warns on retired ids (including Llama 3.x).
+- Doctor now checks PyTorch >= 2.10 and always imports `tml_renderers`.
+- `/tinker deploy` still writes Tinker API clients, and now also writes `EXPORT.md`, `export.py`, and `SERVING.md` (Cookbook `weights.*`, optional Modal SGLang commands, HTDYM pointer for overlapping presets). Inkling stays on Tinker.
+- Stopped vendoring Cookbook research/debug reference files. Packaged skills are thin Pi overlays that point at `/plugin marketplace add thinking-machines-lab/tinker-cookbook`. Added `tinker-inkling` for operator rules.
+
 ## 0.8.0
 
 Inkling support:

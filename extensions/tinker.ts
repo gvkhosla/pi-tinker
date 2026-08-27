@@ -12,8 +12,13 @@ const execFile = promisify(execFileCb);
 const TINKER_OAI_BASE_URL = "https://tinker.thinkingmachines.dev/services/tinker-prod/oai/api/v1";
 const TINKER_ANTHROPIC_BASE_URL = "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api";
 const INKLING_MODEL = "thinkingmachines/Inkling";
+const INKLING_SMALL_MODEL = "thinkingmachines/Inkling-Small";
 const INKLING_256K_MODEL = "thinkingmachines/Inkling:peft:262144";
-const DEFAULT_MODEL = INKLING_MODEL;
+const DEFAULT_MODEL = INKLING_SMALL_MODEL;
+const COOKBOOK_INSTALL = "uv pip install -U tinker-cookbook";
+const MODELS_DOCS_URL = "https://tinker-docs.thinkingmachines.ai/tinker/models/";
+const DEPRECATIONS_URL = "https://tinker-docs.thinkingmachines.ai/tinker/model-deprecations/";
+const HTDYM_URL = "https://htdym.sailresearch.com";
 const STATE_PATH = path.join(os.homedir(), ".pi", "agent", "tinker-checkpoints.json");
 const MESSAGE_TYPE = "tinker-report";
 
@@ -36,6 +41,71 @@ type TinkerState = {
 
 function isInklingModel(model?: string): boolean {
   return Boolean(model?.startsWith("thinkingmachines/Inkling"));
+}
+
+function starterModelChoices(): string[] {
+  return [
+    `${INKLING_SMALL_MODEL} — default; cheaper Inkling sibling (276B / 12B active)`,
+    `${INKLING_MODEL} — full Inkling (975B / 41B active)`,
+    "Qwen/Qwen3.5-9B-Base — cheaper small base model",
+    "Qwen/Qwen3.5-35B-A3B-Base — stronger Qwen MoE base",
+    "Qwen/Qwen3.8-27B — dense hybrid; exportable to self-host",
+    "custom",
+  ];
+}
+
+const RETIRED_MODEL_IDS = new Set([
+  "meta-llama/Llama-3.3-70B-Instruct",
+  "meta-llama/Llama-3.1-70B",
+  "meta-llama/Llama-3.1-8B",
+  "meta-llama/Llama-3.1-8B-Instruct",
+  "meta-llama/Llama-3.2-3B",
+  "meta-llama/Llama-3.2-1B",
+  "moonshotai/Kimi-K2-Thinking",
+  "moonshotai/Kimi-K2.5",
+  "deepseek-ai/DeepSeek-V3.1-Base",
+  "Qwen/Qwen3.5-27B",
+  "Qwen/Qwen3.5-35B-A3B",
+  "Qwen/Qwen3-32B",
+  "Qwen/Qwen3-8B-Base",
+  "Qwen/Qwen3-4B-Instruct-2507",
+  "Qwen/Qwen3-235B-A22B-Instruct-2507",
+  "Qwen/Qwen3-30B-A3B-Instruct-2507",
+  "Qwen/Qwen3-30B-A3B",
+  "Qwen/Qwen3-30B-A3B-Base",
+  "Qwen/Qwen3-VL-235B-A22B-Instruct",
+  "Qwen/Qwen3-VL-30B-A3B-Instruct",
+]);
+
+function isRetiredModel(model?: string): boolean {
+  if (!model) return false;
+  if (model.startsWith("meta-llama/")) return true;
+  return RETIRED_MODEL_IDS.has(model);
+}
+
+type ExportKind = "tinker-only" | "peft" | "merge-only" | "unknown";
+
+function exportKindFor(baseModel?: string): ExportKind {
+  if (!baseModel) return "unknown";
+  if (isInklingModel(baseModel)) return "tinker-only";
+  const id = baseModel.toLowerCase();
+  // Cookbook: DeepSeek LoRA serving blocked; Kimi/gpt-oss conversion works but vLLM LoRA serving does not.
+  if (id.includes("deepseek") || id.includes("kimi") || id.includes("gpt-oss")) return "merge-only";
+  if (id.includes("qwen") || id.includes("nemotron")) return "peft";
+  return "unknown";
+}
+
+const HTDYM_PRESETS: Record<string, string> = {
+  "Qwen/Qwen3.8-27B": "Qwen3.8 27B",
+  "Qwen/Qwen3.6-35B-A3B": "Qwen3.6 35B A3B",
+  "openai/gpt-oss-120b": "gpt-oss-120b MXFP4/BF16",
+  "openai/gpt-oss-20b": "gpt-oss-20b MXFP4/BF16",
+  "moonshotai/Kimi-K2.6": "Kimi K2.6 INT4/BF16",
+};
+
+function htdymPreset(baseModel?: string): string | undefined {
+  if (!baseModel) return undefined;
+  return HTDYM_PRESETS[baseModel];
 }
 
 function inklingCompat() {
@@ -596,9 +666,7 @@ print(json.dumps({
   });
   const result = JSON.parse(stdout.trim().split(/\n/).slice(-1)[0] ?? "{}");
   if (!result.ok && result.stage !== "done") {
-    const installCommand = isInklingModel(model)
-      ? "uv pip install -U 'tinker-cookbook[inkling]'"
-      : "uv pip install -U tinker-cookbook";
+    const installCommand = COOKBOOK_INSTALL;
     return [
       `# Python-backed validation could not run`,
       `- Stage: ${result.stage ?? "unknown"}`,
@@ -680,7 +748,7 @@ function makeEvalScript() {
 }
 
 function makeProjectReadme(options: { model: string; dataFile: string; logPath: string; successMetric: string }) {
-  return `# Tinker fine-tuning project\n\nThis project was scaffolded by \`pi-tinker\`. The important files are normal editable Python, not hidden framework state.\n\n## Goal\n\nFine-tune \`${options.model}\` on:\n\n\`${options.dataFile}\`\n\n## Success metric\n\n${options.successMetric || "Define this before scaling beyond a smoke test."}\n\n## Smoke test\n\n\`\`\`bash\n${isInklingModel(options.model) ? "uv pip install -U 'tinker-cookbook[inkling]'" : "uv pip install -U tinker-cookbook"}\npython train_sft.py max_steps=2\n\`\`\`\n\n${isInklingModel(options.model) ? "Inkling uses its recommended TMLv0 renderer automatically. This generic SFT scaffold trains at the renderer default effort, 0.9 (high). Run `/tinker inkling sweep` before training and use the same effort for baseline and checkpoint evals.\n\n" : ""}## Monitor\n\nInside Pi:\n\n\`\`\`text\n/tinker monitor ${options.logPath}\n/tinker status ${options.logPath}\n/tinker checkpoints ${options.logPath}\n\`\`\`\n\n## Scale up\n\nOnly scale after checking:\n\n- JSONL validation passed\n- renderer/token validation passed\n- smoke test produced metrics\n- decoded examples look correct\n- success metric/eval is defined\n\n\`\`\`bash\npython train_sft.py max_steps=100\n\`\`\`\n\n## Chat with a checkpoint in Pi\n\nAfter a sampler checkpoint appears in \`checkpoints.jsonl\`:\n\n\`\`\`text\n/tinker checkpoints ${options.logPath}\n/model\n\`\`\`\n`;
+  return `# Tinker fine-tuning project\n\nThis project was scaffolded by \`pi-tinker\`. The important files are normal editable Python, not hidden framework state.\n\n## Goal\n\nFine-tune \`${options.model}\` on:\n\n\`${options.dataFile}\`\n\n## Success metric\n\n${options.successMetric || "Define this before scaling beyond a smoke test."}\n\n## Smoke test\n\n\`\`\`bash\n${COOKBOOK_INSTALL}\npython train_sft.py max_steps=2\n\`\`\`\n\n${isInklingModel(options.model) ? "Inkling uses its recommended TMLv0 renderer automatically. This generic SFT scaffold trains at the renderer default effort, 0.9 (high). Run `/tinker inkling sweep` before training and use the same effort for baseline and checkpoint evals.\n\n" : ""}## Monitor\n\nInside Pi:\n\n\`\`\`text\n/tinker monitor ${options.logPath}\n/tinker status ${options.logPath}\n/tinker checkpoints ${options.logPath}\n\`\`\`\n\n## Scale up\n\nOnly scale after checking:\n\n- JSONL validation passed\n- renderer/token validation passed\n- smoke test produced metrics\n- decoded examples look correct\n- success metric/eval is defined\n\n\`\`\`bash\npython train_sft.py max_steps=100\n\`\`\`\n\n## Chat with a checkpoint in Pi\n\nAfter a sampler checkpoint appears in \`checkpoints.jsonl\`:\n\n\`\`\`text\n/tinker checkpoints ${options.logPath}\n/model\n\`\`\`\n`;
 }
 
 function makeExampleEvalJsonl() {
@@ -1007,7 +1075,7 @@ async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<str
       checks.push(major > 3 || (major === 3 && minor >= 11) ? `✅ Python ${stdout.trim()} supports Inkling` : `❌ Inkling requires Python 3.11+ (found ${stdout.trim()})`);
     } catch {}
   }
-  const modules = isInklingModel(model) ? ["tinker", "tinker_cookbook", "chz", "tml_renderers"] : ["tinker", "tinker_cookbook", "chz"];
+  const modules = ["tinker", "tinker_cookbook", "chz", "tml_renderers"];
   for (const mod of modules) {
     try {
       await execFile("python3", ["-c", `import ${mod}; print('ok')`], { cwd, timeout: 20_000 });
@@ -1016,12 +1084,23 @@ async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<str
       checks.push(`⚠️ Python cannot import ${mod}`);
     }
   }
+  try {
+    const { stdout } = await execFile("python3", ["-c", "import torch; print(torch.__version__)"], { timeout: 20_000 });
+    const ver = stdout.trim();
+    const [major, minor] = ver.split(".").map((p) => Number.parseInt(p, 10));
+    checks.push(major > 2 || (major === 2 && minor >= 10) ? `✅ PyTorch ${ver} (>= 2.10)` : `❌ PyTorch ${ver} is too old; tml-renderers needs torch>=2.10`);
+  } catch {
+    checks.push("⚠️ Python cannot import torch; reinstall with `" + COOKBOOK_INSTALL + "`");
+  }
   if (isInklingModel(model)) {
     try {
       const { stdout } = await execFile("python3", ["-c", "import importlib.metadata as m; print(m.version('tinker'))"], { timeout: 20_000 });
       const [major, minor] = stdout.trim().split(".").map(Number);
       checks.push(major > 0 || minor >= 23 ? `✅ Tinker SDK ${stdout.trim()} supports Inkling` : `❌ Inkling requires Tinker SDK 0.23+ (found ${stdout.trim()})`);
     } catch {}
+  }
+  if (isRetiredModel(model)) {
+    checks.push(`⚠️ \`${model}\` is not on Tinker's current lineup. Check ${MODELS_DOCS_URL} and ${DEPRECATIONS_URL} before training.`);
   }
   checks.push(existsSync(path.join(cwd, "train_sft.py")) ? "✅ train_sft.py exists" : "⬜ train_sft.py missing; run /tinker new or /tinker init");
   checks.push(existsSync(path.join(cwd, "eval.py")) ? "✅ eval.py exists" : "⬜ eval.py missing; run /tinker eval init");
@@ -1044,7 +1123,11 @@ async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<str
     }
   }
   if (isInklingModel(model)) {
-    checks.push("ℹ️ Inkling uses the TMLv0 renderer and default SFT effort 0.9 (high)");
+    checks.push("ℹ️ Inkling family uses TMLv0 via tml-renderers (default cookbook dep) and SFT effort 0.9 unless you set otherwise");
+    checks.push(model === INKLING_SMALL_MODEL || model.startsWith(INKLING_SMALL_MODEL)
+      ? "ℹ️ Inkling-Small is the default: same renderer/effort interface as full Inkling, cheaper"
+      : "ℹ️ Full Inkling is 975B/41B active. Prefer Inkling-Small unless you need the larger model");
+    checks.push("ℹ️ Pin the same effort for training data, baseline eval, and checkpoint eval. Sweep with `/tinker inkling sweep`");
   }
   const next = wizard ? wizardSteps(cwd, wizard).find((step) => !step.done)?.nextCommand : "/tinker new";
   return [
@@ -1056,7 +1139,8 @@ async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<str
     next ?? "/tinker next",
     "```",
     "",
-    isInklingModel(model) ? "Inkling dependency fix: `uv pip install -U 'tinker-cookbook[inkling]'`." : "",
+    `Install/upgrade Cookbook with \`${COOKBOOK_INSTALL}\`. Live model list: ${MODELS_DOCS_URL}`,
+    "Research/debug methodology lives in the official Cookbook plugin: `/plugin marketplace add thinking-machines-lab/tinker-cookbook`.",
     "If anything is confusing, run `/skill:tinker-debug` with this report.",
   ].join("\n");
 }
@@ -1154,14 +1238,205 @@ function sanitizeName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "tinker-model";
 }
 
-function makeDeployFiles(options: { checkpoint: string; alias: string; outDir: string }) {
+function makeExportMarkdown(options: { checkpoint: string; alias: string; baseModel?: string }): string {
+  const { checkpoint, alias, baseModel } = options;
+  const kind = exportKindFor(baseModel);
+  const model = baseModel ?? "<base-model>";
+  if (kind === "tinker-only") {
+    return `# Export ${alias}
+
+\`${model}\` should stay on Tinker's sampling endpoint. Cookbook has no merge/PEFT path for Inkling or Inkling-Small.
+
+Use the Tinker API snippets in this folder (\`python_client.py\`, \`fastapi_app.py\`). Do not run \`export.py\`.
+`;
+  }
+  const peftBlock = kind === "peft"
+    ? `## PEFT adapter (vLLM / SGLang)
+
+\`\`\`bash
+${COOKBOOK_INSTALL}
+python3 export.py --peft
+# then, for example:
+# vllm serve ${model} --lora-modules ${alias}=./peft_adapter
+\`\`\`
+
+`
+    : `## PEFT adapter
+
+Not recommended for \`${model}\`. Cookbook can convert some of these families, but vLLM/SGLang LoRA serving is blocked or unverified. Merge instead.
+
+`;
+  const modalBlock = kind === "unknown"
+    ? ""
+    : `## Optional: serve on Modal
+
+Cookbook's Modal recipe merges the checkpoint and serves it with SGLang. This is a generated command, not a Pi runtime.
+
+\`\`\`bash
+pip install "tinker-cookbook[modal]"
+modal setup
+export TINKER_API_KEY=...
+# optional, gated base models only:
+export HF_TOKEN=...
+
+modal run -m tinker_cookbook.inference.modal.prepare \\
+  --tinker-path '${checkpoint}' \\
+  --base-model ${model} --name ${alias}
+
+FINETUNE=${alias} MODEL=${model} modal deploy -m tinker_cookbook.inference.modal.serve
+\`\`\`
+
+Compare Tinker sampling vs the Modal endpoint:
+
+\`\`\`bash
+FINETUNE=${alias} MODEL=${model} \\
+  modal run -m tinker_cookbook.inference.modal.compare \\
+  --tinker-path '${checkpoint}' --url $URL
+\`\`\`
+`;
+  return `# Export ${alias}
+
+Download the Tinker sampler checkpoint and turn it into local weights with Cookbook's \`tinker_cookbook.weights\` helpers. pi-tinker does not run a serving stack.
+
+- Checkpoint: \`${checkpoint}\`
+- Base model: \`${model}\`
+
+Install Cookbook, then:
+
+\`\`\`bash
+${COOKBOOK_INSTALL}
+python3 export.py --merge
+\`\`\`
+
+${peftBlock}## Merge to a full Hugging Face model
+
+\`\`\`bash
+python3 export.py --merge
+# optional:
+python3 export.py --merge --publish your-hf-user/${alias}
+\`\`\`
+
+${modalBlock}Live Cookbook weight docs: https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/weights/README.md
+`;
+}
+
+function makeExportScript(options: { checkpoint: string; alias: string; baseModel?: string }): string {
+  const { checkpoint, alias, baseModel } = options;
+  const kind = exportKindFor(baseModel);
+  const model = baseModel ?? "";
+  if (kind === "tinker-only" || !model) {
+    return `"""Inkling checkpoints stay on Tinker. Do not export."""
+import sys
+raise SystemExit(
+    "${model || "This Inkling checkpoint"} should be served through Tinker's API. "
+    "Use python_client.py / fastapi_app.py in this folder."
+)
+`;
+  }
+  return `"""Export a Tinker sampler checkpoint with tinker_cookbook.weights.
+
+Usage:
+  python3 export.py --merge
+  python3 export.py --peft
+  python3 export.py --merge --publish user/${alias}
+"""
+from __future__ import annotations
+
+import argparse
+from tinker_cookbook import weights
+
+CHECKPOINT = ${JSON.stringify(checkpoint)}
+BASE_MODEL = ${JSON.stringify(model)}
+ALIAS = ${JSON.stringify(alias)}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Export a Tinker sampler checkpoint.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--merge", action="store_true", help="Merge LoRA into a full HF model (default)")
+    mode.add_argument("--peft", action="store_true", help="Write a PEFT adapter for vLLM/SGLang")
+    parser.add_argument("--publish", help="Hugging Face repo id, e.g. user/${alias}")
+    args = parser.parse_args()
+    peft = args.peft
+    adapter = weights.download(tinker_path=CHECKPOINT, output_dir="./adapter")
+    if peft:
+        weights.build_lora_adapter(base_model=BASE_MODEL, adapter_path=adapter, output_path="./peft_adapter")
+        print(f"PEFT adapter written to ./peft_adapter")
+        print(f"Example: vllm serve {BASE_MODEL} --lora-modules {ALIAS}=./peft_adapter")
+        return
+    weights.build_hf_model(base_model=BASE_MODEL, adapter_path=adapter, output_path="./model")
+    print("Merged model written to ./model")
+    if args.publish:
+        weights.publish_to_hf_hub(model_path="./model", repo_id=args.publish, private=True)
+        print(f"Published to {args.publish}")
+
+
+if __name__ == "__main__":
+    main()
+`;
+}
+
+function makeServingMarkdown(options: { alias: string; baseModel?: string }): string {
+  const { alias, baseModel } = options;
+  const model = baseModel ?? "unknown base model";
+  const kind = exportKindFor(baseModel);
+  const preset = htdymPreset(baseModel);
+  if (kind === "tinker-only") {
+    return `# Serving ${alias}
+
+Stay on Tinker. \`${model}\` is not in a self-host catalog we can price, and Cookbook does not export Inkling weights for vLLM/SGLang.
+
+Use the OpenAI-compatible snippets in this folder against Tinker's endpoint. That is the product path for Inkling and Inkling-Small.
+`;
+  }
+  const htdymBlock = preset
+    ? `## Self-host cost (HTDYM)
+
+This base model maps to the HTDYM preset **${preset}**.
+
+HTDYM is a static inference cost estimator, not a deployer. Open it with these four inputs:
+
+1. Model: \`${preset}\`
+2. Workload: start at prefill 4096 / decode 1024 (edit if your eval is different)
+3. Hardware: H100 8x, H200, B200, or 4090 depending on what you can rent
+4. Target: e.g. 20 tok/s/user
+
+Explorer: ${HTDYM_URL}
+
+Use it to decide whether self-host is even a conversation versus staying on Tinker. pi-tinker does not run the estimator or stand up a cluster.
+`
+    : `## Self-host cost (HTDYM)
+
+\`${model}\` is not in the current HTDYM preset list, so we cannot quote tok/s or relative $ here.
+
+Explorer: ${HTDYM_URL}
+
+If you add the architecture later, compare Tinker sampling vs a box you actually have. Do not invent a GPU table.
+`;
+  return `# Serving ${alias}
+
+Default: keep sampling on Tinker until eval is green.
+
+- Checkpoint serving via Tinker: \`python_client.py\` / \`fastapi_app.py\`
+- Export weights: see \`EXPORT.md\` and \`export.py\`
+- Base model: \`${model}\`
+
+${htdymBlock}Llama 3.x is not a Tinker live-lineup default anymore. Do not plan a self-host one-pager around a retired Tinker model without checking ${MODELS_DOCS_URL}.
+`;
+}
+
+function makeDeployFiles(options: { checkpoint: string; alias: string; outDir: string; baseModel?: string }) {
   const model = options.checkpoint;
   const alias = sanitizeName(options.alias);
+  const baseModel = options.baseModel;
   return [
     {
       rel: "README.md",
-      content: `# Deploy ${alias}\n\nThis folder was generated by \`/tinker deploy\`. It gives you copy-paste snippets for using a Tinker sampler checkpoint through Tinker's OpenAI-compatible endpoint.\n\n## Environment\n\n\`\`\`bash\nexport TINKER_API_KEY=...\nexport TINKER_MODEL='${model}'\nexport TINKER_BASE_URL='${TINKER_OAI_BASE_URL}'\n\`\`\`\n\n## Python\n\n\`\`\`bash\npython3 -m pip install openai\npython3 python_client.py\n\`\`\`\n\n## Node\n\n\`\`\`bash\nnpm install openai\nnode node_client.mjs\n\`\`\`\n\n## FastAPI wrapper\n\n\`\`\`bash\npython3 -m pip install fastapi uvicorn openai\nuvicorn fastapi_app:app --reload\n\`\`\`\n\nThis endpoint is best for quick inspection/internal testing. For production serving, export or deploy weights through your preferred serving stack when available.\n`,
+      content: `# Deploy ${alias}\n\nThis folder was generated by \`/tinker deploy\`.\n\n1. **Tinker API** — copy-paste clients against Tinker's OpenAI-compatible endpoint (good for Inkling and for inspection).\n2. **Export** — \`EXPORT.md\` + \`export.py\` use Cookbook \`weights.*\` when the base model can leave Tinker.\n3. **Serving decision** — \`SERVING.md\` says stay-on-Tinker vs self-host, with an HTDYM pointer when the architecture is in that catalog.\n\n## Environment\n\n\`\`\`bash\nexport TINKER_API_KEY=...\nexport TINKER_MODEL='${model}'\nexport TINKER_BASE_URL='${TINKER_OAI_BASE_URL}'\n\`\`\`\n\n## Python\n\n\`\`\`bash\npython3 -m pip install openai\npython3 python_client.py\n\`\`\`\n\n## Node\n\n\`\`\`bash\nnpm install openai\nnode node_client.mjs\n\`\`\`\n\n## FastAPI wrapper\n\n\`\`\`bash\npython3 -m pip install fastapi uvicorn openai\nuvicorn fastapi_app:app --reload\n\`\`\`\n\nRead \`EXPORT.md\` before standing up GPUs. Inkling stays on Tinker.\n`,
     },
+    { rel: "EXPORT.md", content: makeExportMarkdown({ checkpoint: options.checkpoint, alias, baseModel }) },
+    { rel: "export.py", content: makeExportScript({ checkpoint: options.checkpoint, alias, baseModel }) },
+    { rel: "SERVING.md", content: makeServingMarkdown({ alias, baseModel }) },
     {
       rel: ".env.example",
       content: `TINKER_API_KEY=your-api-key\nTINKER_BASE_URL=${TINKER_OAI_BASE_URL}\nTINKER_MODEL=${model}\n`,
@@ -1181,10 +1456,10 @@ function makeDeployFiles(options: { checkpoint: string; alias: string; outDir: s
   ];
 }
 
-async function writeDeployFiles(cwd: string, options: { checkpoint: string; alias: string; outDir: string; force?: boolean }): Promise<string[]> {
+async function writeDeployFiles(cwd: string, options: { checkpoint: string; alias: string; outDir: string; force?: boolean; baseModel?: string }): Promise<string[]> {
   const dir = path.resolve(cwd, options.outDir);
   const written: string[] = [];
-  for (const file of makeDeployFiles({ checkpoint: options.checkpoint, alias: options.alias, outDir: options.outDir })) {
+  for (const file of makeDeployFiles({ checkpoint: options.checkpoint, alias: options.alias, outDir: options.outDir, baseModel: options.baseModel })) {
     const target = path.join(dir, file.rel);
     if (existsSync(target) && !options.force) continue;
     await mkdir(path.dirname(target), { recursive: true });
@@ -1194,15 +1469,19 @@ async function writeDeployFiles(cwd: string, options: { checkpoint: string; alia
   return written;
 }
 
-function resolveCheckpointRef(input: string | undefined, state: TinkerState, wizard?: WizardState): { checkpoint?: string; alias: string } {
+function resolveCheckpointRef(input: string | undefined, state: TinkerState, wizard?: WizardState): { checkpoint?: string; alias: string; baseModel?: string } {
   if (!input || input === "latest") {
     const latest = state.checkpoints.slice(-1)[0];
-    return { checkpoint: wizard?.checkpointPath ?? latest?.id, alias: wizard?.registeredModel ?? latest?.name ?? "my-finetune" };
+    return {
+      checkpoint: wizard?.checkpointPath ?? latest?.id,
+      alias: wizard?.registeredModel ?? latest?.name ?? "my-finetune",
+      baseModel: latest?.baseModel ?? wizard?.model,
+    };
   }
   const byAlias = state.checkpoints.find((m) => m.name === input || m.id === input);
-  if (byAlias) return { checkpoint: byAlias.id, alias: byAlias.name };
-  if (input.startsWith("tinker://")) return { checkpoint: input, alias: "my-finetune" };
-  return { checkpoint: undefined, alias: input };
+  if (byAlias) return { checkpoint: byAlias.id, alias: byAlias.name, baseModel: byAlias.baseModel ?? wizard?.model };
+  if (input.startsWith("tinker://")) return { checkpoint: input, alias: "my-finetune", baseModel: wizard?.model };
+  return { checkpoint: undefined, alias: input, baseModel: wizard?.model };
 }
 
 function makeExactEvalScript() {
@@ -1217,8 +1496,8 @@ Match modes:
   - prefix: normalized output starts with normalized expected
 
 Examples:
-  python eval.py --base-model thinkingmachines/Inkling --effort 0.9 --data data/eval.jsonl --out eval_results/baseline.json
-  python eval.py --model-path 'tinker://.../sampler_weights/...' --renderer-model thinkingmachines/Inkling --effort 0.9 --data data/eval.jsonl --out eval_results/step-20.json
+  python eval.py --base-model thinkingmachines/Inkling-Small --effort 0.9 --data data/eval.jsonl --out eval_results/baseline.json
+  python eval.py --model-path 'tinker://.../sampler_weights/...' --renderer-model thinkingmachines/Inkling-Small --effort 0.9 --data data/eval.jsonl --out eval_results/step-20.json
 """
 
 from __future__ import annotations
@@ -1660,6 +1939,17 @@ export default async function (pi: ExtensionAPI) {
   function registerTinkerProvider() {
     const inklingModels = [
       {
+        id: INKLING_SMALL_MODEL,
+        name: "Inkling-Small (Tinker, 64K)",
+        reasoning: true,
+        thinkingLevelMap: inklingThinkingLevels(),
+        input: ["text", "image"] as ("text" | "image")[],
+        cost: { input: 0.62, output: 1.56, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 65_536,
+        maxTokens: 16_384,
+        compat: inklingCompat(),
+      },
+      {
         id: INKLING_MODEL,
         name: "Inkling (Tinker, 64K)",
         reasoning: true,
@@ -1761,23 +2051,30 @@ export default async function (pi: ExtensionAPI) {
           sendReport("Inkling on Tinker", [
             "Inkling is ready to use in Pi. Set `TINKER_API_KEY`, run `/model`, and choose an Inkling model under the Tinker provider.",
             "",
-            "## What works",
-            "- Chat, coding tools, images, and streamed reasoning.",
-            "- Shift+Tab changes reasoning effort: low, medium, high, or xhigh.",
-            "- The normal model has a 64K Tinker context; a 256K option is also available.",
+            "## What to pick",
+            `- **Default:** \`${INKLING_SMALL_MODEL}\` — 276B total / 12B active. Same renderer, tokenizer, and effort interface as full Inkling. Prefer this for coding, grading, and synthetic data.`,
+            `- **Full:** \`${INKLING_MODEL}\` — 975B total / 41B active.`,
+            "- 256K long-context variant: `thinkingmachines/Inkling:peft:262144`.",
             "",
-            "## To fine-tune Inkling",
-            "Install the Python 3.11+ dependencies:",
+            "## What works",
+            "- Chat, coding tools, images, audio (via Cookbook sampling scripts), and streamed reasoning.",
+            "- Shift+Tab changes reasoning effort: low, medium, high, or xhigh.",
+            "- Effort is mandatory. The renderer defaults to 0.9 if you omit it — make that a deliberate choice.",
+            "- Sample evals at temperature=1.0. Raise max_tokens with effort (high effort can need 16k+).",
+            "- Never tokenizer.encode() a chat prompt for Inkling; use TMLv0 / tml-renderers.",
+            "",
+            "## To fine-tune",
+            "Python 3.11+, Tinker SDK 0.23+, torch>=2.10. tml-renderers ships in the default Cookbook install:",
             "```bash",
-            "uv pip install -U 'tinker-cookbook[inkling]'",
+            COOKBOOK_INSTALL,
             "```",
             "Then start without API usage:",
             "```text",
-            "/tinker improve data.csv --goal \"what should improve\" --budget demo",
+            `/tinker improve data.csv --goal "what should improve" --budget demo --model ${INKLING_SMALL_MODEL}`,
             "```",
             "",
-            "Inkling defaults to high effort (0.9). Keep the same effort when comparing the base model and a trained checkpoint.",
-            "Advanced model id: `thinkingmachines/Inkling` (975B total / 41B active).",
+            "Keep the same effort when comparing the base model and a trained checkpoint. Sweep first with `/tinker inkling sweep`.",
+            "Cookbook does not publish a default Inkling learning rate; calibrate it. Stay on Tinker for serving — there is no self-host export path.",
           ].join("\n"));
           return;
         }
@@ -1825,7 +2122,7 @@ export default async function (pi: ExtensionAPI) {
               error?.message ?? String(error),
               error?.stdout ? `\n## stdout\n\`\`\`text\n${String(error.stdout).split(/\n/).slice(-100).join("\n")}\n\`\`\`` : "",
               error?.stderr ? `\n## stderr\n\`\`\`text\n${String(error.stderr).split(/\n/).slice(-100).join("\n")}\n\`\`\`` : "",
-              "\nInstall/upgrade with `uv pip install -U 'tinker-cookbook[inkling]'`.",
+              "\nInstall/upgrade with `uv pip install -U tinker-cookbook`.",
             ].filter(Boolean).join("\n"), "error");
           } finally {
             ctx.ui.setStatus("tinker", undefined);
@@ -1909,12 +2206,7 @@ export default async function (pi: ExtensionAPI) {
         }
 
         if (ctx.hasUI && !model) {
-          const choice = await ctx.ui.select("Pick a starter model", [
-            `${INKLING_MODEL} — Thinking Machines' multimodal open-weights model`,
-            "Qwen/Qwen3.5-9B-Base — cheaper small base model",
-            "Qwen/Qwen3.5-35B-A3B-Base — stronger Qwen MoE base",
-            "custom",
-          ]);
+          const choice = await ctx.ui.select("Pick a starter model", starterModelChoices());
           model = choice === "custom" ? ((await ctx.ui.input("Tinker model id", DEFAULT_MODEL))?.trim() || DEFAULT_MODEL) : (choice?.split(" — ")[0] || DEFAULT_MODEL);
         }
         model = model || DEFAULT_MODEL;
@@ -2224,11 +2516,19 @@ export default async function (pi: ExtensionAPI) {
         }
         const alias = sanitizeName(String(options.alias ?? positional[1] ?? resolved.alias ?? "my-finetune"));
         const outDir = String(options.out ?? path.join("deploy", alias));
-        const written = await writeDeployFiles(ctx.cwd, { checkpoint: resolved.checkpoint, alias, outDir, force: options.force === true });
+        const baseModel = String(options.model ?? options["base-model"] ?? resolved.baseModel ?? "");
+        const written = await writeDeployFiles(ctx.cwd, {
+          checkpoint: resolved.checkpoint,
+          alias,
+          outDir,
+          force: options.force === true,
+          baseModel: baseModel || undefined,
+        });
         sendReport("Tinker deploy files ready", [
           written.length ? `Wrote ${written.map((x) => `\`${x}\``).join(", ")}.` : "Deploy files already existed; left them untouched. Re-run with `--force` to overwrite.",
+          baseModel ? `\nBase model: \`${baseModel}\`` : "\nPass `--model <base-model>` if export/serving guidance looks generic.",
           "",
-          "## Use it",
+          "## Tinker API (inspection)",
           "```bash",
           `cd ${outDir}`,
           "cp .env.example .env  # then fill TINKER_API_KEY",
@@ -2236,10 +2536,10 @@ export default async function (pi: ExtensionAPI) {
           "python3 python_client.py",
           "```",
           "",
-          "## App wrapper",
+          "## Export / serving decision",
+          "Read `EXPORT.md` and `SERVING.md` before standing up GPUs. Inkling stays on Tinker.",
           "```bash",
-          "python3 -m pip install fastapi uvicorn openai",
-          "uvicorn fastapi_app:app --reload",
+          "python3 export.py --merge   # no-op / exits for Inkling",
           "```",
         ].join("\n"), "success");
         return;
@@ -2256,7 +2556,7 @@ export default async function (pi: ExtensionAPI) {
           dataFileInput = (await ctx.ui.input("Where is your training JSONL?", "data/train.jsonl"))?.trim() ?? "";
         }
         if (!dataFileInput) {
-          sendReport("Fine-tune wizard", "Usage: `/tinker start data/train.jsonl --model thinkingmachines/Inkling --metric 'what should improve'`", "warning");
+          sendReport("Fine-tune wizard", "Usage: `/tinker start data/train.jsonl --model thinkingmachines/Inkling-Small --metric 'what should improve'`", "warning");
           return;
         }
         const dataFile = path.resolve(ctx.cwd, dataFileInput);
@@ -2266,12 +2566,7 @@ export default async function (pi: ExtensionAPI) {
         }
 
         if (ctx.hasUI && !model) {
-          const choice = await ctx.ui.select("Pick a starter model", [
-            `${INKLING_MODEL} — Thinking Machines' multimodal open-weights model`,
-            "Qwen/Qwen3.5-9B-Base — cheaper small base model",
-            "Qwen/Qwen3.5-35B-A3B-Base — stronger Qwen MoE base",
-            "custom",
-          ]);
+          const choice = await ctx.ui.select("Pick a starter model", starterModelChoices());
           model = choice === "custom" ? ((await ctx.ui.input("Tinker model id", DEFAULT_MODEL))?.trim() || DEFAULT_MODEL) : (choice?.split(" — ")[0] || DEFAULT_MODEL);
         }
         model = model || DEFAULT_MODEL;
@@ -2349,19 +2644,19 @@ export default async function (pi: ExtensionAPI) {
           const [major, minor] = version.split(".").map(Number);
           checks.push(major > 0 || minor >= 23 ? `✅ Tinker SDK ${version} supports Inkling.` : `❌ Inkling requires Tinker SDK 0.23+ (found ${version}).`);
         } catch {
-          checks.push("⚠️ Python cannot import `tinker`. Install with: `uv pip install -U 'tinker-cookbook[inkling]'`.");
+          checks.push("⚠️ Python cannot import `tinker`. Install with: `uv pip install -U tinker-cookbook`.");
         }
         try {
           const { stdout } = await execFile("python3", ["-c", "import tinker_cookbook; print('ok')"], { timeout: 20_000 });
           checks.push(`✅ Python can import \`tinker_cookbook\` (${stdout.trim()}).`);
         } catch {
-          checks.push("⚠️ Python cannot import `tinker_cookbook`. Install with: `uv pip install -U 'tinker-cookbook[inkling]'`.");
+          checks.push("⚠️ Python cannot import `tinker_cookbook`. Install with: `uv pip install -U tinker-cookbook`.");
         }
         try {
           await execFile("python3", ["-c", "import tml_renderers; print('ok')"], { timeout: 20_000 });
           checks.push("✅ Python can import `tml_renderers` for Inkling.");
         } catch {
-          checks.push("⚠️ Python cannot import `tml_renderers`. Install with: `uv pip install -U 'tinker-cookbook[inkling]'` (Python 3.11+ required).");
+          checks.push("⚠️ Python cannot import `tml_renderers`. Install with: `uv pip install -U tinker-cookbook` (Python 3.11+ required).");
         }
         sendReport("Tinker setup check", checks.join("\n"));
         return;
@@ -2371,7 +2666,7 @@ export default async function (pi: ExtensionAPI) {
         const { positional, options } = parseOptions(rest);
         const file = positional[0];
         if (!file) {
-          sendReport("Tinker validate", "Usage: `/tinker validate data/train.jsonl --model thinkingmachines/Inkling`", "warning");
+          sendReport("Tinker validate", "Usage: `/tinker validate data/train.jsonl --model thinkingmachines/Inkling-Small`", "warning");
           return;
         }
         const dataFile = path.resolve(ctx.cwd, file);
@@ -2402,8 +2697,8 @@ export default async function (pi: ExtensionAPI) {
           sendReport("Tinker eval", [
             "Commands:",
             "- `/tinker eval init` — create `eval.py` and `data/eval.jsonl`.",
-            "- `/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9` — evaluate base Inkling.",
-            "- `/tinker eval checkpoint tinker://... --model thinkingmachines/Inkling --effort 0.9` — evaluate a sampler checkpoint at the same effort.",
+            "- `/tinker eval baseline --model thinkingmachines/Inkling-Small --effort 0.9` — evaluate base Inkling.",
+            "- `/tinker eval checkpoint tinker://... --model thinkingmachines/Inkling-Small --effort 0.9` — evaluate a sampler checkpoint at the same effort.",
             "- `/tinker eval compare eval_results/baseline.json eval_results/checkpoint.json` — compare results.",
           ].join("\n"));
           return;
@@ -2431,8 +2726,8 @@ export default async function (pi: ExtensionAPI) {
             "",
             "Edit `data/eval.jsonl`, then run:",
             "```text",
-            "/tinker eval baseline --model thinkingmachines/Inkling --effort 0.9 --yes",
-            "/tinker eval checkpoint tinker://.../sampler_weights/... --model thinkingmachines/Inkling --effort 0.9 --yes",
+            "/tinker eval baseline --model thinkingmachines/Inkling-Small --effort 0.9 --yes",
+            "/tinker eval checkpoint tinker://.../sampler_weights/... --model thinkingmachines/Inkling-Small --effort 0.9 --yes",
             "/tinker eval compare eval_results/baseline.json eval_results/checkpoint.json",
             "```",
           ].join("\n"), "success");
@@ -2453,7 +2748,7 @@ export default async function (pi: ExtensionAPI) {
           }
           const checkpoint = action === "checkpoint" ? positional[0] : undefined;
           if (action === "checkpoint" && !checkpoint) {
-            sendReport("Tinker eval checkpoint", "Usage: `/tinker eval checkpoint tinker://.../sampler_weights/... --model thinkingmachines/Inkling --effort 0.9`", "warning");
+            sendReport("Tinker eval checkpoint", "Usage: `/tinker eval checkpoint tinker://.../sampler_weights/... --model thinkingmachines/Inkling-Small --effort 0.9`", "warning");
             return;
           }
           const out = path.resolve(ctx.cwd, String(options.out ?? (action === "baseline" ? "eval_results/baseline.json" : `eval_results/${String(checkpoint).split("/").slice(-1)[0] || "checkpoint"}.json`)));
@@ -2521,12 +2816,7 @@ export default async function (pi: ExtensionAPI) {
           dataFileArg = (await ctx.ui.input("Training JSONL path", "data/train.jsonl"))?.trim();
         }
         if (ctx.hasUI && !model) {
-          const modelChoice = await ctx.ui.select("Choose a starting model", [
-            `${INKLING_MODEL} — Thinking Machines' multimodal open-weights model`,
-            "Qwen/Qwen3.5-9B-Base — cheaper small base model",
-            "Qwen/Qwen3.5-35B-A3B-Base — stronger Qwen MoE base",
-            "custom",
-          ]);
+          const modelChoice = await ctx.ui.select("Choose a starting model", starterModelChoices());
           if (modelChoice === "custom") model = (await ctx.ui.input("Tinker model id", DEFAULT_MODEL))?.trim() || DEFAULT_MODEL;
           else model = modelChoice?.split(" — ")[0] || DEFAULT_MODEL;
         }
@@ -2534,7 +2824,7 @@ export default async function (pi: ExtensionAPI) {
           successMetric = (await ctx.ui.input("What should improve?", "e.g. held-out exact match, support response quality, benchmark score"))?.trim() || "Define before scaling beyond a smoke test.";
         }
         if (!dataFileArg) {
-          sendReport("Tinker init", "Usage: `/tinker init data/train.jsonl --model thinkingmachines/Inkling --metric 'held-out accuracy'`", "warning");
+          sendReport("Tinker init", "Usage: `/tinker init data/train.jsonl --model thinkingmachines/Inkling-Small --metric 'held-out accuracy'`", "warning");
           return;
         }
         const dataFile = path.resolve(ctx.cwd, dataFileArg);
@@ -2586,7 +2876,7 @@ export default async function (pi: ExtensionAPI) {
         const { positional, options } = parseOptions(rest);
         const dataFileArg = positional[0];
         if (!dataFileArg) {
-          sendReport("Tinker SFT scaffold", "Usage: `/tinker sft data/train.jsonl --model thinkingmachines/Inkling --steps 20`", "warning");
+          sendReport("Tinker SFT scaffold", "Usage: `/tinker sft data/train.jsonl --model thinkingmachines/Inkling-Small --steps 20`", "warning");
           return;
         }
         const dataFile = path.resolve(ctx.cwd, dataFileArg);
@@ -2628,7 +2918,7 @@ export default async function (pi: ExtensionAPI) {
           "",
           "Next commands:",
           "```bash",
-          isInklingModel(model) ? "uv pip install -U 'tinker-cookbook[inkling]'" : "uv pip install -U tinker-cookbook",
+          COOKBOOK_INSTALL,
           "python train_sft.py max_steps=2",
           "# inspect logs, then scale up:",
           `python train_sft.py max_steps=${maxSteps}`,

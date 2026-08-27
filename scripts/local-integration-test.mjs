@@ -43,6 +43,7 @@ async function main() {
     // Extension loads without crashing and registers base Inkling even before checkpoints exist.
     const baseModels = pi(["--list-models"], { cwd: tmp });
     assert(baseModels.includes("thinkingmachines/Inkling"), "base Inkling model was not registered");
+    assert(baseModels.includes("thinkingmachines/Inkling-Small"), "Inkling-Small was not registered");
 
     // The tool-agnostic coding-agent adapter should invoke the same extension.
     const agentOutput = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "inkling"], { cwd: tmp });
@@ -71,8 +72,14 @@ async function main() {
     pi(["-p", "/tinker improve support.csv --goal support-quality --budget demo --force"], { cwd: tmp });
     assert(existsSync(path.join(tmp, ".tinker-pi", "state.json")), "/tinker improve demo did not create wizard state");
     pi(["-p", "/tinker deploy tinker://pi-tinker-test/sampler_weights/000003 pi-tinker-deploy --force"], { cwd: tmp });
-    assert(existsSync(path.join(tmp, "deploy", "pi-tinker-deploy", "python_client.py")), "/tinker deploy did not create python_client.py");
-    assert(readFileSync(path.join(tmp, "deploy", "pi-tinker-deploy", ".env.example"), "utf8").includes("tinker://pi-tinker-test/sampler_weights/000003"), "/tinker deploy env missing checkpoint");
+    const deployDir = path.join(tmp, "deploy", "pi-tinker-deploy");
+    assert(existsSync(path.join(deployDir, "python_client.py")), "/tinker deploy did not create python_client.py");
+    assert(existsSync(path.join(deployDir, "EXPORT.md")), "/tinker deploy did not create EXPORT.md");
+    assert(existsSync(path.join(deployDir, "export.py")), "/tinker deploy did not create export.py");
+    assert(existsSync(path.join(deployDir, "SERVING.md")), "/tinker deploy did not create SERVING.md");
+    assert(readFileSync(path.join(deployDir, ".env.example"), "utf8").includes("tinker://pi-tinker-test/sampler_weights/000003"), "/tinker deploy env missing checkpoint");
+    const serving = readFileSync(path.join(deployDir, "SERVING.md"), "utf8");
+    assert(serving.includes("Stay on Tinker") || serving.includes("stay on Tinker") || serving.includes("HTDYM") || serving.includes("Export"), "SERVING.md missing a serving decision");
 
     // Beginner wizard should create state, scaffold files, show next step, and reset cleanly.
     pi(["-p", "/tinker start train.jsonl --metric quality --force"], { cwd: tmp });
@@ -98,7 +105,7 @@ async function main() {
     const readme = readFileSync(path.join(tmp, "README.md"), "utf8");
     assert(readme.includes("/tinker monitor"), "generated README missing monitor instructions");
     assert(readFileSync(path.join(tmp, "tinker.yaml"), "utf8").includes("success_metric: quality"), "tinker.yaml missing success metric");
-    assert(readFileSync(path.join(tmp, "train_sft.py"), "utf8").includes("thinkingmachines/Inkling"), "generated SFT script did not default to Inkling");
+    assert(readFileSync(path.join(tmp, "train_sft.py"), "utf8").includes("thinkingmachines/Inkling-Small"), "generated SFT script did not default to Inkling-Small");
 
     // /tinker sft should refuse to clobber unless --force, then regenerate.
     pi(["-p", "/tinker sft train.jsonl --force --steps 3"], { cwd: tmp });

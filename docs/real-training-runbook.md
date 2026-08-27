@@ -9,7 +9,7 @@ Use this to produce a verified before/after result for the README or a launch po
 ```bash
 pi install git:github.com/gvkhosla/pi-tinker
 export TINKER_API_KEY="..."
-uv pip install -U 'tinker-cookbook[inkling]'
+uv pip install -U tinker-cookbook
 ```
 
 ## 2. Start with the bundled customer-support CSV
