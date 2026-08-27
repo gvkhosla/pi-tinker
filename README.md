@@ -1,8 +1,8 @@
 # pi-tinker
 
-Use and fine-tune [Inkling](https://thinkingmachines.ai/inkling/) with [Tinker](https://thinkingmachines.ai/tinker/) inside [Pi](https://pi.dev).
+Fine-tune [Inkling](https://thinkingmachines.ai/inkling/) **or any active model supported by [Tinker](https://thinkingmachines.ai/tinker/)** inside [Pi](https://pi.dev).
 
-`pi-tinker` helps you turn examples into a trained model without hiding the real work. It prepares data, writes editable Python, checks your setup, runs evals, starts small training runs, and lets you chat with checkpoints in Pi.
+`pi-tinker` helps you turn examples into a trained model without hiding the real work. It prepares data, writes editable Python, checks your setup, runs evals, starts small training runs, and lets you chat with checkpoints in Pi. Inkling has the richest first-class integration, but the generated Tinker Cookbook SFT workflow is not limited to Inkling.
 
 > **New here?** Install the package and run `/tinker demo`. The demo does not use the Tinker API.
 
@@ -44,12 +44,13 @@ Inside Pi:
 
 This creates a tiny customer-support project with editable training data, Python scripts, and an eval. It stops before any API usage.
 
-### 3. Fine-tune Inkling on your data
+### 3. Fine-tune a Tinker model on your data
 
-Start with CSV, JSON, JSONL, text files, Markdown, or a docs directory:
+Start with CSV, JSON, JSONL, text files, Markdown, or a docs directory. Omit `--model` to use Inkling-Small, or pass any active [Tinker model ID](https://tinker-docs.thinkingmachines.ai/tinker/models/):
 
 ```text
 /tinker improve data.csv --goal "better customer support answers" --budget demo
+/tinker improve data.csv --goal "better extraction" --model Qwen/Qwen3.5-9B-Base --budget demo
 ```
 
 The `demo` budget deterministically holds out task-relevant eval rows, excludes them from training, and prepares everything without calling the API. Review `data/eval.jsonl`, then acknowledge that review when you run a small smoke test:
@@ -71,6 +72,53 @@ data → held-out eval → validation → baseline → smoke → training → ch
 ```
 
 It hashes the source, train/eval data, eval code, model, and effort so stale results are never reused. Eval comparisons fail closed on malformed scores, count mismatches, or effort/model mismatches. Candidate checkpoints stay separate from approved checkpoints; `deploy latest` only resolves a checkpoint that beat its matching baseline. `--force` only regenerates files—it cannot bypass quality or provenance checks. Dangerous overrides have explicit names such as `--accept-regression` and `--allow-unapproved`.
+
+## Which model should I fine-tune?
+
+### The 30-second answer
+
+**If you are unsure, start with `thinkingmachines/Inkling-Small`.** It is the pi-tinker default because it is capable, multimodal, cheaper than full Inkling, and uses the same renderer and reasoning-effort interface. Move to another model only when your eval, context, or deployment requirements give you a reason.
+
+| What you need | Good first candidate | Why |
+|---|---|---|
+| Easiest strong default; coding, grading, synthetic data, images/audio | `thinkingmachines/Inkling-Small` | Best-supported pi-tinker path; 64K context and automatic effort selection |
+| Inkling quality is not enough on your eval | `thinkingmachines/Inkling` | Larger and more expensive; use only when it measurably beats Small |
+| More than 64K context | The matching `:peft:262144` variant | 256K context costs more, so choose it only when examples actually need it |
+| Compact, lower-cost, exportable model | `Qwen/Qwen3.5-4B` or `Qwen/Qwen3.5-9B` | Smaller dense models; useful when latency, cost, or self-hosting matters |
+| Train from a less opinionated base model | `Qwen/Qwen3.5-9B-Base` | More control, but less chat-ready and usually needs stronger data/evals |
+| Low-cost reasoning model | `openai/gpt-oss-20b` | Small reasoning option with a 32K context; export requires merged weights |
+| Efficient medium model | `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` | Low active parameter count; useful cost/quality candidate |
+| Self-host after training | Prefer Qwen or Nemotron | pi-tinker can generate PEFT/export guidance; Inkling stays on Tinker |
+
+Model IDs and availability change. The [live Tinker model list](https://tinker-docs.thinkingmachines.ai/tinker/models/) is the source of truth; pi-tinker refuses known retired IDs unless you explicitly acknowledge that risk.
+
+### Choose by constraints, in this order
+
+1. **Serving:** If you must self-host, do not choose Inkling. Start with an exportable Qwen or Nemotron model.
+2. **Inputs:** For audio, choose Inkling. For images, choose a model marked Vision or Audio + Vision in Tinker's catalog.
+3. **Context:** Use 64K or less unless your real examples require more. Long-context variants cost more.
+4. **Budget and latency:** Start with the smallest plausible model. A well-chosen smaller model is easier to iterate on.
+5. **Your held-out eval:** Compare candidates on the same reviewed eval and pick the cheapest model that meets your quality bar—not the model with the largest parameter count.
+
+A practical comparison after the `demo` setup:
+
+```text
+/tinker eval baseline --model thinkingmachines/Inkling-Small --effort 0.9 --out eval_results/inkling-small.json --yes
+/tinker eval baseline --model Qwen/Qwen3.5-9B --out eval_results/qwen-9b.json --yes
+```
+
+Inspect both summaries using the same `data/eval.jsonl`, then run managed fine-tuning with the winner:
+
+```text
+/tinker improve data.csv --goal "better customer support answers" --model thinkingmachines/Inkling-Small --budget smoke --eval-reviewed --yes
+```
+
+### What “any Tinker model” means
+
+- The model must be on Tinker's current supported-model list; pi-tinker cannot upload an arbitrary Hugging Face model to Tinker.
+- pi-tinker is strongest for editable Cookbook **SFT**. Learning rate, batch size, and other settings may need calibration for each model.
+- Inkling gets automatic base-model chat registration and reasoning-effort selection. Other models still use the managed data, training, eval, checkpoint, and approval workflow.
+- Export options depend on architecture: Inkling stays on Tinker; Qwen/Nemotron generally support PEFT workflows; some families require merged weights.
 
 ## Setup for fine-tuning
 
@@ -178,7 +226,8 @@ node scripts/agent-cli.mjs improve data.csv --goal "better answers" --budget dem
 Ask your agent:
 
 ```text
-Read AGENTS.md. Use pi-tinker to prepare and validate this data for Inkling.
+Read AGENTS.md. Use pi-tinker to prepare and validate this data for a Tinker-supported model.
+Start with Inkling-Small unless my eval, context, budget, or deployment requirements suggest a better candidate.
 Do not call the API or start training until I approve.
 ```
 
