@@ -65,6 +65,8 @@ async function main() {
     pi(["-p", "/tinker recommend --goal support-quality --data data/prepared.jsonl"], { cwd: tmp });
     pi(["-p", "/tinker demo --force"], { cwd: tmp });
     assert(existsSync(path.join(tmp, ".tinker-pi", "state.json")), "/tinker demo did not create wizard state");
+    const nextOut = run(process.execPath, [path.join(repo, "scripts", "agent-cli.mjs"), "next"], { cwd: tmp });
+    assert(nextOut.includes("/tinker improve") && nextOut.includes("smoke"), "/tinker next after demo should print improve --budget smoke");
     pi(["-p", "/tinker new support.csv --goal support-quality --force"], { cwd: tmp });
     assert(existsSync(path.join(tmp, "data", "train.jsonl")), "/tinker new did not prepare data/train.jsonl");
     assert(existsSync(path.join(tmp, "train_sft.py")), "/tinker new did not create train_sft.py");

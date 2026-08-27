@@ -10,10 +10,12 @@ You only need a few commands for the normal workflow:
 |---|---|
 | See a free local demo | `/tinker demo` |
 | Prepare your own data without API usage | `/tinker improve <data> --goal "..." --budget demo` |
+| The one next command | `/tinker next` |
 | Check your setup | `/tinker doctor` |
-| See the next step | `/tinker next` |
 | Learn about Inkling | `/tinker inkling` |
 | Choose Inkling or a checkpoint | `/model` |
+
+`new`, `start`, `init`, and `finetune` are aliases for `improve --budget demo`. Smoke/small refuse to scale or register a checkpoint that does not beat baseline unless you pass `--force`.
 
 The `demo` budget makes no API calls. Commands using `--yes` may sample or train through the Tinker API.
 

@@ -149,14 +149,13 @@ API-using stages require confirmation. In non-interactive commands, `--yes` is t
 ## Useful commands
 
 ```text
-/tinker inkling                         Inkling setup and model information
 /tinker demo                            Create a no-cost example project
-/tinker improve <data> --goal "..."     Run the guided workflow
+/tinker improve <data> --goal "..."     The front door (demo → smoke → small)
+/tinker next                            The one next command, filled in
 /tinker doctor                          Check your environment
-/tinker validate data/train.jsonl       Inspect data and token masks
-/tinker next                            Show the next safe step
+/tinker inkling                         Inkling-Small vs Inkling, effort
 /tinker monitor logs/<run>              Watch training metrics
-/tinker checkpoints logs/<run>          Find and register checkpoints
+/tinker deploy latest                   Tinker API snippets + export plan
 /model                                  Choose Inkling or a trained checkpoint
 ```
 

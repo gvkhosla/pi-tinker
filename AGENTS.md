@@ -39,7 +39,6 @@ If the user has no data yet:
 ```text
 /tinker demo
 /tinker next
-/tinker doctor
 ```
 
 If the user has CSV/JSON/JSONL/docs, prefer the managed operator first:
@@ -59,7 +58,7 @@ Then, only after the user understands API usage and evals:
 Manual path:
 
 ```text
-/tinker new <input> --model thinkingmachines/Inkling-Small --goal "what should improve"
+/tinker improve <input> --model thinkingmachines/Inkling-Small --goal "what should improve" --budget demo
 /tinker doctor
 /tinker validate data/train.jsonl --model thinkingmachines/Inkling-Small
 /tinker eval baseline --model thinkingmachines/Inkling-Small --effort 0.9 --yes

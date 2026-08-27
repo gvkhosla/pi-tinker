@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.1
+
+One front door, fail closed:
+
+- `new`, `start`, `init`, and `finetune` now run `improve --budget demo`. Help is `demo` / `improve` / `next` / `doctor` / `inkling` / `monitor` / `deploy`.
+- `/tinker next` prints one filled-in `improve` or `deploy` command.
+- Smoke saves a checkpoint (`save_every=1`) and evals it. If it does not beat baseline, improve refuses to scale or register unless `--force`.
+- Inkling effort is pinned (default 0.9) on API budgets. First run sweeps one eval prompt unless `--effort` or `--no-sweep` is set. Retired model ids are refused without `--force`.
+
 ## 0.9.0
 
 Cookbook catch-up and serving decision:

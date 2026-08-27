@@ -1046,7 +1046,7 @@ async function writeExampleTemplate(cwd: string, slug: string, force = false): P
   const files = [
     { rel: path.join("examples", slug, "train.jsonl"), content: jsonl(template.trainRows) },
     { rel: path.join("examples", slug, "eval.jsonl"), content: jsonl(template.evalRows) },
-    { rel: path.join("examples", slug, "README.md"), content: `# ${template.title}\n\nGoal: ${template.goal}\n\nTry:\n\n\`\`\`text\n/tinker new examples/${slug}/train.jsonl --goal "${template.goal}" --force\n/tinker validate examples/${slug}/train.jsonl --quick\n\`\`\`\n` },
+    { rel: path.join("examples", slug, "README.md"), content: `# ${template.title}\n\nGoal: ${template.goal}\n\nTry:\n\n\`\`\`text\n/tinker improve examples/${slug}/train.jsonl --goal "${template.goal}" --budget demo --force\n/tinker validate examples/${slug}/train.jsonl --quick\n\`\`\`\n` },
   ];
   const written: string[] = [];
   for (const file of files) {
@@ -1721,7 +1721,62 @@ type WizardState = {
   checkpointPath?: string;
   candidateResult?: string;
   registeredModel?: string;
+  effort?: number;
+  effortSweepAt?: number;
 };
+
+function evalBeatBaseline(baselinePath: string, candidatePath: string): {
+  ok: boolean;
+  delta: number;
+  baseline: number;
+  candidate: number;
+} {
+  const baseline = readEvalSummary(baselinePath).accuracy ?? 0;
+  const candidate = readEvalSummary(candidatePath).accuracy ?? 0;
+  return { ok: candidate > baseline, delta: candidate - baseline, baseline, candidate };
+}
+
+function firstEvalUserPrompt(evalFile: string): string | undefined {
+  if (!existsSync(evalFile)) return undefined;
+  for (const line of readFileSync(evalFile, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line) as { messages?: Array<{ role?: string; content?: unknown }> };
+      const user = row.messages?.find((m) => m.role === "user");
+      const text = typeof user?.content === "string" ? user.content.trim() : "";
+      if (text) return text;
+    } catch {
+      /* skip bad rows */
+    }
+  }
+  return undefined;
+}
+
+function nextImproveCommand(cwd: string, state: WizardState): string {
+  const data = state.dataFileInput || (state.dataFile ? rel(cwd, state.dataFile) : "data/train.jsonl");
+  const model = state.model ?? DEFAULT_MODEL;
+  const goal = state.metric ?? "what should improve";
+  const effort = isInklingModel(model) ? ` --effort ${state.effort ?? 0.9}` : "";
+  const flags = ` --goal ${JSON.stringify(goal)} --model ${model}${effort}`;
+  if (!state.dataFile || !existsSync(state.dataFile)) {
+    return `/tinker improve ${data} --budget demo${flags}`;
+  }
+  if (!state.smokeAt) {
+    return `/tinker improve ${data} --budget smoke --yes${flags}`;
+  }
+  if (state.baselineResult && state.candidateResult && existsSync(state.baselineResult) && existsSync(state.candidateResult)) {
+    try {
+      const cmp = evalBeatBaseline(state.baselineResult, state.candidateResult);
+      if (!cmp.ok) {
+        return `/tinker improve ${data} --budget smoke --yes${flags}\n# checkpoint did not beat baseline (${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%). Add eval-like examples, then re-run smoke. Pass --force to ignore.`;
+      }
+      return `/tinker deploy ${state.registeredModel ?? "latest"}`;
+    } catch {
+      /* fall through */
+    }
+  }
+  return `/tinker improve ${data} --budget small --yes${flags}`;
+}
 
 function wizardDir(cwd: string) {
   return path.join(cwd, ".tinker-pi");
@@ -1888,15 +1943,15 @@ function renderWizard(cwd: string, state: WizardState): string {
     ...steps.map((step) => `${step.done ? "✅" : "⬜"} **${step.label}** — ${step.detail}`),
     "",
     next
-      ? `## Next step\n${next.apiUsage ? "⚠️ This step may use the Tinker API.\n\n" : ""}Run:\n\n\`\`\`text\n${next.nextCommand ?? "/tinker next"}\n\`\`\``
-      : "## Complete\nYou have a validated dataset, before/after evals, and a checkpoint ready to chat with in Pi.",
+      ? `## Next step\n${next.apiUsage ? "⚠️ This step may use the Tinker API.\n\n" : ""}Run this one command:\n\n\`\`\`text\n${nextImproveCommand(cwd, state)}\n\`\`\``
+      : `## Complete\nYou have a validated dataset, before/after evals, and a checkpoint ready to chat with in Pi.\n\n\`\`\`text\n${nextImproveCommand(cwd, state)}\n\`\`\``,
     "",
-    "Use `/tinker next` any time to see the next recommended action, or `/tinker reset` to start over.",
+    "Use `/tinker next` any time to see the next recommended action. The front door is `/tinker improve`.",
   ].join("\n");
 }
 
 async function createWizardFiles(cwd: string, state: WizardState, force = false): Promise<string[]> {
-  if (!state.dataFile) throw new Error("Wizard has no dataFile. Run `/tinker start data/train.jsonl` first.");
+  if (!state.dataFile) throw new Error("Wizard has no dataFile. Run `/tinker improve data.csv --budget demo` first.");
   const model = state.model ?? DEFAULT_MODEL;
   const logPath = state.logPath ?? `logs/sft-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
   const files = [
@@ -1905,8 +1960,8 @@ async function createWizardFiles(cwd: string, state: WizardState, force = false)
     { rel: "eval_checkpoint.py", content: makeEvalScript() },
     { rel: "eval.py", content: makeExactEvalScript() },
     { rel: path.join("data", "eval.jsonl"), content: makeExampleEvalJsonl() },
-    { rel: "tinker.yaml", content: `task: sft\ndata: ${state.dataFile}\nmodel: ${model}\nlog_path: ${logPath}\nmax_steps: 20\nbatch_size: 8\nlearning_rate: 2e-4\nsuccess_metric: ${state.metric ?? ""}\n` },
-    { rel: path.join("notes", "plan.md"), content: `# Fine-tuning plan\n\n## Goal\n\n${state.metric ?? "Define what should improve."}\n\n## Wizard\n\nRun \`/tinker next\` for the next step.\n` },
+    { rel: "tinker.yaml", content: `task: sft\ndata: ${state.dataFile}\nmodel: ${model}\nlog_path: ${logPath}\nmax_steps: 20\nbatch_size: 8\nlearning_rate: 2e-4\nsuccess_metric: ${state.metric ?? ""}\n${isInklingModel(model) ? `effort: ${state.effort ?? 0.9}\n` : ""}` },
+    { rel: path.join("notes", "plan.md"), content: `# Fine-tuning plan\n\n## Goal\n\n${state.metric ?? "Define what should improve."}\n\n## Next\n\n\`/tinker next\` prints one command. The front door is \`/tinker improve\`.\n` },
   ];
   const written: string[] = [];
   for (const file of files) {
@@ -2013,31 +2068,36 @@ export default async function (pi: ExtensionAPI) {
   pi.registerCommand("tinker", {
     description: "Tinker + Inkling helper: chat, sweep effort, fine-tune, evaluate, monitor, and use checkpoints",
     handler: async (args, ctx) => {
-      const [subcommandRaw, ...rest] = shellSplit(args);
-      const subcommand = subcommandRaw ?? "help";
+      let [subcommandRaw, ...rest] = shellSplit(args);
+      let subcommand = subcommandRaw ?? "help";
+      if (subcommand === "demo") {
+        rest = ["--example", "customer-support", "--budget", "demo", ...rest];
+        subcommand = "improve";
+      } else if (subcommand === "new" || subcommand === "finetune" || subcommand === "start" || subcommand === "init") {
+        const parsed = parseOptions(rest);
+        if (parsed.options.budget === undefined) rest = [...rest, "--budget", "demo"];
+        if (!parsed.options.goal && parsed.options.metric) rest = [...rest, "--goal", String(parsed.options.metric)];
+        subcommand = "improve";
+      }
 
       if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
         sendReport("Tinker helper", [
-          "## Start here",
-          "- `/tinker demo` — create a free local example; no API calls.",
-          "- `/tinker improve data.csv --goal \"what should improve\" --budget demo` — prepare your own data without API calls.",
+          "## Front door",
+          "- `/tinker demo` — free local example; no API calls.",
+          "- `/tinker improve data.csv --goal \"what should improve\" --budget demo` — prepare your data without API calls.",
+          "- `/tinker next` — the one next command, filled in.",
           "- `/tinker doctor` — check what is installed or missing.",
-          "- `/tinker next` — show the next safe step.",
-          "- `/tinker inkling` — explain Inkling and how to select it with `/model`.",
+          "- `/tinker inkling` — Inkling-Small vs Inkling, effort, `/model`.",
           "",
-          "## When you are ready to use the API",
-          "- `/tinker improve data.csv --goal \"...\" --budget smoke --yes` — baseline eval plus two training steps.",
-          "- `/tinker improve data.csv --goal \"...\" --budget small --yes` — short training plus checkpoint comparison.",
+          "## Then, with `--yes`",
+          "- `/tinker improve --budget smoke --yes` — baseline + 2-step train + checkpoint eval. Stops if the checkpoint is not better.",
+          "- `/tinker improve --budget small --yes` — short training only if smoke beat baseline.",
           "- `/tinker monitor <log_dir>` — watch metrics.",
-          "- `/tinker checkpoints <log_dir>` — find and register checkpoints.",
+          "- `/tinker deploy latest` — Tinker API snippets + export/serving plan.",
           "",
-          "## More commands",
-          "- Data: `prepare`, `new`, `examples`, `validate`.",
-          "- Experiments: `eval`, `sft`, `smoke`, `status`.",
-          "- Checkpoints: `use`, `deploy`.",
-          "- Project state: `start`, `next`, `reset`, `setup`, `init`.",
-          "",
-          "Full reference: `docs/commands.md`. API-using commands require confirmation; `--yes` is explicit approval.",
+          "`new`, `start`, `init`, and `finetune` now run `improve --budget demo`.",
+          "Advanced (`validate`, `eval`, `sft`, `smoke`, `use`, …): `docs/commands.md`.",
+          "API-using commands require confirmation; `--yes` is explicit approval.",
         ].join("\n"));
         return;
       }
@@ -2175,7 +2235,7 @@ export default async function (pi: ExtensionAPI) {
           sendReport("Tinker new", [
             "Usage:",
             "```text",
-            "/tinker new --example customer-support",
+            "/tinker improve --example customer-support --budget demo",
             "/tinker new data/train.csv --goal \"better support answers\"",
             "/tinker new data/train.jsonl --goal \"what should improve\"",
             "```",
@@ -2293,7 +2353,7 @@ export default async function (pi: ExtensionAPI) {
             "Copy one into this project:",
             "```text",
             "/tinker examples copy customer-support",
-            "/tinker new --example customer-support",
+            "/tinker improve --example customer-support --budget demo",
             "```",
           ].join("\n"));
           return;
@@ -2308,7 +2368,7 @@ export default async function (pi: ExtensionAPI) {
               "",
               "Start from it:",
               "```text",
-              `/tinker new examples/${result.template.slug}/train.jsonl --goal "${result.template.goal}"`,
+              `/tinker improve examples/${result.template.slug}/train.jsonl --goal "${result.template.goal}" --budget demo`,
               "```",
             ].join("\n"), "success");
           } catch (error) {
@@ -2343,11 +2403,26 @@ export default async function (pi: ExtensionAPI) {
         const metric = String(options.goal ?? options.metric ?? "Improve task quality on held-out examples.");
         const steps = budgetMaxSteps(budget, options.steps ?? options.max_steps);
         const existingWizard = await readWizardState(ctx.cwd);
+        const exampleSlug = options.example === true ? "customer-support" : options.example ? String(options.example) : "";
         let dataFileInput = positional[0] ? String(positional[0]) : existingWizard?.dataFileInput ?? existingWizard?.dataFile ?? "";
         let dataFile = dataFileInput ? path.resolve(ctx.cwd, dataFileInput) : "";
         const sections: string[] = [managedRunPlan(budget)];
 
         try {
+          if (exampleSlug) {
+            const result = await writeExampleTemplate(ctx.cwd, exampleSlug, force);
+            dataFileInput = path.join("examples", result.template.slug, "train.jsonl");
+            dataFile = path.resolve(ctx.cwd, dataFileInput);
+            sections.push(`## Example\nCopied \`${result.template.title}\` to \`${dataFileInput}\`.`);
+          }
+          if (isRetiredModel(model) && !force) {
+            sendReport("Tinker improve", [
+              `\`${model}\` is not on Tinker's current lineup.`,
+              `Check ${MODELS_DOCS_URL} and ${DEPRECATIONS_URL}.`,
+              "Pass `--force` to proceed anyway, or pick Inkling-Small / a live Qwen id.",
+            ].join("\n"), "error");
+            return;
+          }
           if (!dataFileInput) {
             sendReport("Tinker improve", [
               "Usage:",
@@ -2398,8 +2473,9 @@ export default async function (pi: ExtensionAPI) {
           sections.push(`## Lightweight validation\n${validateDataset(dataFile)}`);
 
           if (budget === "demo") {
+            const saved = (await readWizardState(ctx.cwd)) ?? stateForRun;
             sections.push("## Stopped before API usage\nDemo budget completed setup, project files, doctor, and lightweight validation without touching the Tinker API.");
-            sections.push("## Next commands\n```text\n/tinker validate " + dataFileInput + " --model " + stateForRun.model + "\n/tinker eval baseline --model " + stateForRun.model + " --yes\n/tinker smoke train_sft.py --yes\n```" );
+            sections.push(`## Next command\n\`\`\`text\n${nextImproveCommand(ctx.cwd, saved)}\n\`\`\``);
             sendReport("Tinker improve plan ready", sections.join("\n\n---\n\n"), "success");
             return;
           }
@@ -2417,10 +2493,43 @@ export default async function (pi: ExtensionAPI) {
 
           const script = path.resolve(ctx.cwd, "eval.py");
           const evalData = path.resolve(ctx.cwd, "data", "eval.jsonl");
-          const evalEffort = String(options.effort ?? 0.9);
           if (!existsSync(script) || !existsSync(evalData)) {
             sendReport("Tinker improve", "Missing `eval.py` or `data/eval.jsonl`. Run `/tinker eval init`, edit eval rows, then re-run improve.", "warning");
             return;
+          }
+          let evalEffort = Number(options.effort ?? stateForRun.effort ?? 0.9);
+          if (!Number.isFinite(evalEffort) || evalEffort < 0 || evalEffort >= 1) evalEffort = 0.9;
+          if (isInklingModel(stateForRun.model) && options.effort === undefined && options["no-sweep"] !== true && !stateForRun.effortSweepAt) {
+            const prompt = firstEvalUserPrompt(evalData);
+            if (prompt) {
+              ctx.ui.setStatus("tinker", "managed improve: effort sweep on eval prompt");
+              try {
+                const sweep = await execFile(
+                  "python3",
+                  ["-m", "tinker_cookbook.scripts.inkling.sample_reasoning", `prompt=${prompt}`, "efforts=[0.2,0.7,0.9,0.99]"],
+                  { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 24 * 1024 * 1024 },
+                );
+                sections.push(`## Inkling effort sweep\nUsed the first eval user prompt. Pinned effort **${evalEffort}** (pass --effort to change). Cookbook SFT still renders at 0.9 unless you edit train_sft.py.\n\n<details><summary>Sweep output</summary>\n\n\`\`\`text\n${`${sweep.stdout}\n${sweep.stderr}`.trim().split(/\n/).slice(-80).join("\n")}\n\`\`\`\n</details>`);
+                await patchWizardState(ctx.cwd, { effort: evalEffort, effortSweepAt: Date.now() });
+                stateForRun.effort = evalEffort;
+                stateForRun.effortSweepAt = Date.now();
+              } catch (error: any) {
+                sections.push(`## Inkling effort sweep skipped\n${error?.message ?? String(error)}\nPinned effort **${evalEffort}** anyway.`);
+                await patchWizardState(ctx.cwd, { effort: evalEffort });
+                stateForRun.effort = evalEffort;
+              }
+            } else {
+              sections.push(`## Inkling effort\nNo eval user prompt found. Pinned effort **${evalEffort}**.`);
+              await patchWizardState(ctx.cwd, { effort: evalEffort });
+              stateForRun.effort = evalEffort;
+            }
+          } else {
+            await patchWizardState(ctx.cwd, { effort: evalEffort });
+            stateForRun.effort = evalEffort;
+            if (isInklingModel(stateForRun.model)) sections.push(`## Inkling effort\nPinned **${evalEffort}** for baseline and checkpoint eval.`);
+          }
+          if (isInklingModel(stateForRun.model) && evalEffort !== 0.9) {
+            sections.push("## Effort warning\nThe generated `train_sft.py` still uses Cookbook's default render effort 0.9. Edit it if you pinned a different eval effort, or keep 0.9.");
           }
 
           ctx.ui.setStatus("tinker", "managed improve: baseline eval");
@@ -2435,7 +2544,7 @@ export default async function (pi: ExtensionAPI) {
             }
           }
           if (baselineNeedsRun) {
-            const { stdout, stderr } = await execFile("python3", [script, "--base-model", stateForRun.model ?? model, "--effort", evalEffort, "--data", evalData, "--out", baselineOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
+            const { stdout, stderr } = await execFile("python3", [script, "--base-model", stateForRun.model ?? model, "--effort", String(evalEffort), "--data", evalData, "--out", baselineOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
             sections.push(`## Baseline eval\n${formatEvalSummary(baselineOut)}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${stdout}\n${stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
             await patchWizardState(ctx.cwd, { baselineResult: baselineOut, model: stateForRun.model });
           } else {
@@ -2446,13 +2555,47 @@ export default async function (pi: ExtensionAPI) {
           const trainScript = path.resolve(ctx.cwd, "train_sft.py");
           const baseLog = String(stateForRun.logPath ?? "logs/sft-managed");
           const smokeLog = `${baseLog}-smoke`;
-          const smoke = await execFile("python3", [trainScript, "max_steps=2", `log_path=${smokeLog}`], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
+          const smoke = await execFile("python3", [trainScript, "max_steps=2", "save_every=1", `log_path=${smokeLog}`], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
           sections.push(`## Smoke train\n2-step smoke training completed.\n\nLatest metrics:\n${latestMetrics(path.join(ctx.cwd, smokeLog, "metrics.jsonl")) ?? "No metrics found yet."}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${smoke.stdout}\n${smoke.stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
           await patchWizardState(ctx.cwd, { smokeAt: Date.now(), smokeLogDir: smokeLog });
 
+          const smokeCheckpoint = firstSamplerCheckpoint(path.resolve(ctx.cwd, smokeLog));
+          let smokeBeatBaseline = force;
+          if (smokeCheckpoint) {
+            ctx.ui.setStatus("tinker", "managed improve: smoke checkpoint eval");
+            const smokeEvalOut = path.resolve(ctx.cwd, "eval_results/smoke.json");
+            const smokeEval = await execFile("python3", [script, "--model-path", smokeCheckpoint, "--renderer-model", stateForRun.model ?? model, "--effort", String(evalEffort), "--data", evalData, "--out", smokeEvalOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
+            sections.push(`## Smoke checkpoint eval\n${formatEvalSummary(smokeEvalOut)}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${smokeEval.stdout}\n${smokeEval.stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
+            sections.push(compareEvalSummaries(baselineOut, smokeEvalOut));
+            const cmp = evalBeatBaseline(baselineOut, smokeEvalOut);
+            smokeBeatBaseline = cmp.ok || force;
+            await patchWizardState(ctx.cwd, { checkpointPath: smokeCheckpoint, candidateResult: smokeEvalOut });
+            if (!cmp.ok) {
+              sections.push(suggestDataImprovementsFromEval(smokeEvalOut));
+              sections.push(`## Stopped: checkpoint did not beat baseline\n${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%. Add 2–5 training examples like the failures, then re-run smoke. Pass --force to scale anyway.`);
+              const saved = (await readWizardState(ctx.cwd)) ?? stateForRun;
+              sections.push(`## Next command\n\`\`\`text\n${nextImproveCommand(ctx.cwd, saved)}\n\`\`\``);
+              if (budget !== "smoke" && !force) {
+                sendReport("Tinker improve stopped: no improvement", sections.join("\n\n---\n\n"), "warning");
+                return;
+              }
+            }
+          } else {
+            sections.push("## Smoke checkpoint\nNo sampler checkpoint after 2 steps (even with `save_every=1`). Inspect logs before scaling.");
+          }
+
           if (budget === "smoke") {
-            sections.push("## Stopped after smoke budget\nSmoke completed. Inspect examples/metrics, then re-run with `--budget small --yes` if this looks sane.");
-            sendReport("Tinker improve smoke completed", sections.join("\n\n---\n\n"), "success");
+            const saved = (await readWizardState(ctx.cwd)) ?? stateForRun;
+            sections.push(smokeBeatBaseline
+              ? "## Stopped after smoke budget\nSmoke beat baseline (or `--force`). Next: `--budget small --yes`."
+              : "## Stopped after smoke budget\nDo not scale yet.");
+            sections.push(`## Next command\n\`\`\`text\n${nextImproveCommand(ctx.cwd, saved)}\n\`\`\``);
+            sendReport("Tinker improve smoke completed", sections.join("\n\n---\n\n"), smokeBeatBaseline ? "success" : "warning");
+            return;
+          }
+
+          if (!smokeBeatBaseline && !force) {
+            sendReport("Tinker improve refused to scale", sections.join("\n\n---\n\n"), "warning");
             return;
           }
 
@@ -2466,9 +2609,19 @@ export default async function (pi: ExtensionAPI) {
           if (checkpoint) {
             ctx.ui.setStatus("tinker", "managed improve: checkpoint eval");
             const candidateOut = path.resolve(ctx.cwd, String(options["candidate-out"] ?? `eval_results/${sanitizeName(path.basename(trainLog))}.json`));
-            const evalRun = await execFile("python3", [script, "--model-path", checkpoint, "--renderer-model", stateForRun.model ?? model, "--effort", evalEffort, "--data", evalData, "--out", candidateOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
+            const evalRun = await execFile("python3", [script, "--model-path", checkpoint, "--renderer-model", stateForRun.model ?? model, "--effort", String(evalEffort), "--data", evalData, "--out", candidateOut], { cwd: ctx.cwd, timeout: Number(options.timeout ?? 1_800_000), maxBuffer: 12 * 1024 * 1024 });
             sections.push(`## Checkpoint eval\n${formatEvalSummary(candidateOut)}\n\n<details><summary>Output tail</summary>\n\n\`\`\`text\n${`${evalRun.stdout}\n${evalRun.stderr}`.trim().split(/\n/).slice(-40).join("\n")}\n\`\`\`\n</details>`);
             sections.push(compareEvalSummaries(baselineOut, candidateOut));
+            const cmp = evalBeatBaseline(baselineOut, candidateOut);
+            await patchWizardState(ctx.cwd, { checkpointPath: checkpoint, candidateResult: candidateOut });
+            if (!cmp.ok && !force) {
+              sections.push(suggestDataImprovementsFromEval(candidateOut));
+              sections.push(`## Not registered\nCheckpoint did not beat baseline (${(cmp.candidate * 100).toFixed(1)}% vs ${(cmp.baseline * 100).toFixed(1)}%). Not registering for chat. Add examples and re-run smoke, or pass --force.`);
+              const saved = (await readWizardState(ctx.cwd)) ?? stateForRun;
+              sections.push(`## Next command\n\`\`\`text\n${nextImproveCommand(ctx.cwd, saved)}\n\`\`\``);
+              sendReport("Tinker improve completed without a win", sections.join("\n\n---\n\n"), "warning");
+              return;
+            }
             sections.push(suggestDataImprovementsFromEval(candidateOut));
             const alias = sanitizeName(String(options.alias ?? `tinker-${path.basename(trainLog)}`));
             if (options.register !== false) {
@@ -2477,12 +2630,14 @@ export default async function (pi: ExtensionAPI) {
               await saveState(state);
               registerTinkerProvider();
               await patchWizardState(ctx.cwd, { checkpointPath: checkpoint, candidateResult: candidateOut, registeredModel: alias });
-              sections.push(`## Registered for chat\nRegistered \`${alias}\`. Use \`/model\` to select it, or generate app snippets with:\n\n\`\`\`text\n/tinker deploy ${alias}\n\`\`\``);
+              sections.push(`## Registered for chat\nRegistered \`${alias}\`. Use \`/model\` to select it, then:\n\n\`\`\`text\n/tinker deploy ${alias}\n\`\`\``);
             }
           } else {
             sections.push("## No checkpoint yet\nTraining completed but no sampler checkpoint was found. Check `checkpoints.jsonl` or increase steps/save frequency.");
           }
 
+          const saved = (await readWizardState(ctx.cwd)) ?? stateForRun;
+          sections.push(`## Next command\n\`\`\`text\n${nextImproveCommand(ctx.cwd, saved)}\n\`\`\``);
           sendReport("Tinker improve completed", sections.join("\n\n---\n\n"), "success");
         } catch (error: any) {
           sendReport("Tinker improve failed", [
@@ -2601,7 +2756,7 @@ export default async function (pi: ExtensionAPI) {
         const { options } = parseOptions(rest);
         const state = await readWizardState(ctx.cwd);
         if (!state) {
-          sendReport("Fine-tune wizard", "No wizard state found. Start with `/tinker start data/train.jsonl`.", "warning");
+          sendReport("Fine-tune wizard", "No wizard state found. Start with `/tinker improve data.csv --budget demo` or `/tinker demo`.", "warning");
           return;
         }
         const steps = wizardSteps(ctx.cwd, state);
@@ -2623,7 +2778,7 @@ export default async function (pi: ExtensionAPI) {
       if (subcommand === "reset") {
         await rm(wizardDir(ctx.cwd), { recursive: true, force: true });
         ctx.ui.setWidget("tinker-monitor", undefined);
-        sendReport("Fine-tune wizard", "Reset `.tinker-pi/`. Run `/tinker start data/train.jsonl` to begin again.", "success");
+        sendReport("Fine-tune wizard", "Reset `.tinker-pi/`. Run `/tinker improve data.csv --budget demo` or `/tinker demo` to begin again.", "success");
         return;
       }
 
