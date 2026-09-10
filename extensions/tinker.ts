@@ -1306,7 +1306,12 @@ async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<str
   checks.push(process.env.TINKER_API_KEY ? "✅ TINKER_API_KEY is set" : "❌ TINKER_API_KEY is missing");
   checks.push((await commandExists("python3")) ? "✅ python3 found" : "❌ python3 not found");
   checks.push((await commandExists("uv")) ? "✅ uv found" : "⚠️ uv not found; pip fallback is okay");
-  checks.push((await commandExists("tinker")) ? "✅ tinker CLI found" : "⚠️ tinker CLI not found");
+  try {
+    const { stdout } = await execFile("tinker", ["--version"], { timeout: 10_000 });
+    checks.push(`✅ tinker CLI ${stdout.trim() || "found"}`);
+  } catch {
+    checks.push((await commandExists("tinker")) ? "✅ tinker CLI found" : "⚠️ tinker CLI not found");
+  }
   if (isInklingModel(model)) {
     try {
       const { stdout } = await execFile("python3", ["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"], { timeout: 20_000 });

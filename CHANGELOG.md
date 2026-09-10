@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.8
+
+- `/tinker doctor` prints the tinker CLI version when it is installed.
+
 ## 0.9.7
 
 - `/tinker doctor` prints the live default model id and confirms it is still Inkling-Small.
