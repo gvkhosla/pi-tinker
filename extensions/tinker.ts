@@ -1369,6 +1369,7 @@ async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<str
     checks.push("ℹ️ Pin the same effort for training data, baseline eval, and checkpoint eval. Sweep with `/tinker inkling sweep`");
   }
   const next = wizard ? wizardSteps(cwd, wizard).find((step) => !step.done)?.nextCommand : "/tinker new";
+  checks.unshift(`ℹ️ default model: \`${DEFAULT_MODEL}\` (still Inkling-Small)`);
   return [
     "# Tinker doctor",
     checks.map((c) => `- ${c}`).join("\n"),

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.7
+
+- `/tinker doctor` prints the live default model id and confirms it is still Inkling-Small.
+
 ## 0.9.6
 
 Live Tinker lineup catch-up (Sep 2026):
