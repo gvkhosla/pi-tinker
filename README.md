@@ -72,8 +72,10 @@ Choose something else when you have a clear reason:
 | Simple default, coding, grading, images, or audio | `thinkingmachines/Inkling-Small` |
 | Better quality than Inkling-Small on your eval | `thinkingmachines/Inkling` |
 | Small model or easier self-hosting | `Qwen/Qwen3.5-4B` or `Qwen/Qwen3.5-9B` |
+| Current dense Qwen | `Qwen/Qwen3.6-27B` |
 | A less opinionated base model | `Qwen/Qwen3.5-9B-Base` |
 | Low-cost reasoning | `openai/gpt-oss-20b` |
+| Large MoE (merge-only export) | `moonshotai/Kimi-K2.6` |
 | More than 64K context | A matching `:peft:262144` model |
 
 Pass the model ID to `improve`:

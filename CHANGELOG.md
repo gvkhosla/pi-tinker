@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.6
+
+Live Tinker lineup catch-up (Sep 2026):
+
+- Starter picker now includes `Qwen/Qwen3.6-27B` and `moonshotai/Kimi-K2.6`.
+- README model table matches the current Tinker catalog.
+- Ignore local `.agents/` and `.opencode/` scratch dirs.
+
 ## 0.9.5
 
 Fail-closed eval comparisons:

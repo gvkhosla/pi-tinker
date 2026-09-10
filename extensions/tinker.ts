@@ -61,8 +61,10 @@ function starterModelChoices(): string[] {
     `${INKLING_MODEL} — full Inkling (975B / 41B active)`,
     `${INKLING_256K_MODEL} — full Inkling with 256K context`,
     "Qwen/Qwen3.5-9B-Base — cheaper small base model",
+    "Qwen/Qwen3.6-27B — current dense Qwen; exportable to self-host",
     "Qwen/Qwen3.5-35B-A3B-Base — stronger Qwen MoE base",
-    "Qwen/Qwen3.8-27B — dense hybrid; exportable to self-host",
+    "Qwen/Qwen3.8-27B — Qwen3.8 dense hybrid",
+    "moonshotai/Kimi-K2.6 — large MoE; merge-only export",
     "custom",
   ];
 }
@@ -110,6 +112,7 @@ function exportKindFor(baseModel?: string): ExportKind {
 
 const HTDYM_PRESETS: Record<string, string> = {
   "Qwen/Qwen3.8-27B": "Qwen3.8 27B",
+  "Qwen/Qwen3.6-27B": "Qwen3.6 27B",
   "Qwen/Qwen3.6-35B-A3B": "Qwen3.6 35B A3B",
   "openai/gpt-oss-120b": "gpt-oss-120b MXFP4/BF16",
   "openai/gpt-oss-20b": "gpt-oss-20b MXFP4/BF16",
