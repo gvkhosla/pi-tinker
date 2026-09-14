@@ -9,6 +9,12 @@ pi-tinker prepares your data, writes editable Python, runs small training jobs, 
 Install pi-tinker:
 
 ```bash
+pi install npm:pi-tinker
+```
+
+Or from git:
+
+```bash
 pi install git:github.com/gvkhosla/pi-tinker
 ```
 
