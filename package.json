@@ -3,6 +3,9 @@
   "version": "0.9.8",
   "description": "Run and fine-tune Inkling-Small, Inkling, and other open-weight models with Tinker from Pi: effort sweeps, evals, SFT scaffolding, checkpoint chat, and Cookbook export/serving plans.",
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "homepage": "https://github.com/gvkhosla/pi-tinker#readme",
   "repository": {
     "type": "git",
