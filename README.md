@@ -1,5 +1,7 @@
 # pi-tinker
 
+[![npm](https://img.shields.io/npm/v/pi-tinker)](https://www.npmjs.com/package/pi-tinker)
+
 Fine-tune models on [Tinker](https://thinkingmachines.ai/tinker/) from [Pi](https://pi.dev).
 
 pi-tinker prepares your data, writes editable Python, runs small training jobs, and compares the trained checkpoint with the original model. It uses Tinker and Tinker Cookbook underneath; it is not a separate training framework.
