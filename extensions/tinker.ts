@@ -6,6 +6,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
@@ -1298,11 +1299,22 @@ async function writeExampleTemplate(cwd: string, slug: string, force = false): P
   return { template, files: written };
 }
 
+function packageVersion(): string {
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 async function buildDoctorReport(cwd: string, dataFileArg?: string): Promise<string> {
   const wizard = await readWizardState(cwd);
   const dataFile = dataFileArg ? path.resolve(cwd, dataFileArg) : wizard?.dataFile;
   const model = wizard?.model ?? DEFAULT_MODEL;
   const checks: string[] = [];
+  checks.push(`ℹ️ pi-tinker ${packageVersion()} (\`pi install npm:pi-tinker\`)`);
   checks.push(process.env.TINKER_API_KEY ? "✅ TINKER_API_KEY is set" : "❌ TINKER_API_KEY is missing");
   checks.push((await commandExists("python3")) ? "✅ python3 found" : "❌ python3 not found");
   checks.push((await commandExists("uv")) ? "✅ uv found" : "⚠️ uv not found; pip fallback is okay");

@@ -5,7 +5,7 @@ Pi is the main interface. Other coding agents can run the same `/tinker` workflo
 ## Pi
 
 ```bash
-pi install git:github.com/gvkhosla/pi-tinker
+pi install npm:pi-tinker
 pi
 ```
 
@@ -21,20 +21,20 @@ Pi also lets you select Inkling or a trained checkpoint with `/model`.
 
 ## Claude Code, Codex, Cursor, Copilot, or Gemini CLI
 
-From this repository, replace `/tinker` with `node scripts/agent-cli.mjs`:
+After `npm i -g pi-tinker`, replace `/tinker` with `pi-tinker-agent`. From a git checkout, use `node scripts/agent-cli.mjs`:
 
 | In Pi | In another coding agent's shell |
 |---|---|
-| `/tinker demo` | `node scripts/agent-cli.mjs demo` |
-| `/tinker doctor` | `node scripts/agent-cli.mjs doctor` |
-| `/tinker validate data/train.jsonl` | `node scripts/agent-cli.mjs validate data/train.jsonl` |
-| `/tinker improve data.csv --budget demo` | `node scripts/agent-cli.mjs improve data.csv --budget demo` |
+| `/tinker demo` | `pi-tinker-agent demo` |
+| `/tinker doctor` | `pi-tinker-agent doctor` |
+| `/tinker validate data/train.jsonl` | `pi-tinker-agent validate data/train.jsonl` |
+| `/tinker improve data.csv --budget demo` | `pi-tinker-agent improve data.csv --budget demo` |
 
 For example:
 
 ```bash
-node scripts/agent-cli.mjs doctor
-node scripts/agent-cli.mjs improve data.csv --goal "better support answers" --budget demo
+pi-tinker-agent doctor
+pi-tinker-agent improve data.csv --goal "better support answers" --budget demo
 ```
 
 The adapter prints the same report that Pi displays. Generated Python and JSONL are identical.

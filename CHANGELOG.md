@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.9
+
+- Install docs and doctor prefer `pi install npm:pi-tinker` / `pi-tinker-agent`.
+- `/tinker doctor` prints the pi-tinker package version.
+
 ## 0.9.8
 
 - `/tinker doctor` prints the tinker CLI version when it is installed.

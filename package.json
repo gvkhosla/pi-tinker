@@ -1,6 +1,6 @@
 {
   "name": "pi-tinker",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "description": "Run and fine-tune Inkling-Small, Inkling, and other open-weight models with Tinker from Pi: effort sweeps, evals, SFT scaffolding, checkpoint chat, and Cookbook export/serving plans.",
   "license": "Apache-2.0",
   "publishConfig": {

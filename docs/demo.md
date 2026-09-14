@@ -5,7 +5,7 @@ Use this demo to see what `pi-tinker` creates. It does **not** call the Tinker A
 ## 1. Install
 
 ```bash
-pi install git:github.com/gvkhosla/pi-tinker
+pi install npm:pi-tinker
 pi
 ```
 

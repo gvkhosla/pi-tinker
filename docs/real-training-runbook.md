@@ -7,7 +7,7 @@ Use this to produce a verified before/after result for the README or a launch po
 ## 1. Install and set up
 
 ```bash
-pi install git:github.com/gvkhosla/pi-tinker
+pi install npm:pi-tinker
 export TINKER_API_KEY="..."
 uv pip install -U tinker-cookbook
 ```
