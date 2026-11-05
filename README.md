@@ -67,6 +67,22 @@ If the checkpoint beats the original model, run a small training job:
 
 Use `/tinker next` at any time to get one filled-in next command.
 
+## Turn past sessions into reviewed data (experimental)
+
+Use optional [Witchcraft/Pickbrain](https://github.com/dropbox/witchcraft) search
+to discover relevant Pi sessions, then import original traces for local review:
+
+```bash
+pi-tinker-experience discover "explaining Python import errors"
+pi-tinker-experience import review.json /path/to/session-one.jsonl /path/to/session-two.jsonl
+# Edit review.json: verify answers, redact private data, approve and assign splits.
+pi-tinker-experience export review.json curated-dataset
+```
+
+No uploads or training. Text pairs only for now; tool trajectories are blocked,
+not flattened. Pickbrain is optional. See [the curation guide](docs/experience.md)
+for review gates, privacy limitations, and train/eval separation.
+
 ## Which model should I use?
 
 pi-tinker can fine-tune any active model supported by Tinker. It cannot upload an arbitrary Hugging Face model that Tinker does not provide.

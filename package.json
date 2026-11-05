@@ -30,7 +30,8 @@
   ],
   "type": "module",
   "bin": {
-    "pi-tinker-agent": "./scripts/agent-cli.mjs"
+    "pi-tinker-agent": "./scripts/agent-cli.mjs",
+    "pi-tinker-experience": "./scripts/experience.mjs"
   },
   "files": [
     "extensions/",
@@ -47,7 +48,8 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "npm run smoke-test && npm run local-integration-test",
+    "test": "npm run experience-test && npm run smoke-test && npm run local-integration-test",
+    "experience-test": "node --test scripts/experience-test.mjs",
     "smoke-test": "node scripts/smoke-test.mjs",
     "local-integration-test": "node scripts/local-integration-test.mjs"
   },

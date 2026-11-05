@@ -13,3 +13,4 @@ jobs:
         with:
           node-version: 22
       - run: npm run smoke-test
+      - run: npm run experience-test
